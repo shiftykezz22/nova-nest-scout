@@ -14,7 +14,241 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      calculation_settings: {
+        Row: {
+          advertising_percent: number
+          created_at: string
+          desired_profit: number
+          duties_per_unit: number
+          fulfillment_fee: number
+          id: string
+          inbound_shipping_per_unit: number
+          prep_cost_per_unit: number
+          referral_fee_percent: number
+          return_allowance_percent: number
+          storage_cost: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          advertising_percent?: number
+          created_at?: string
+          desired_profit?: number
+          duties_per_unit?: number
+          fulfillment_fee?: number
+          id?: string
+          inbound_shipping_per_unit?: number
+          prep_cost_per_unit?: number
+          referral_fee_percent?: number
+          return_allowance_percent?: number
+          storage_cost?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          advertising_percent?: number
+          created_at?: string
+          desired_profit?: number
+          duties_per_unit?: number
+          fulfillment_fee?: number
+          id?: string
+          inbound_shipping_per_unit?: number
+          prep_cost_per_unit?: number
+          referral_fee_percent?: number
+          return_allowance_percent?: number
+          storage_cost?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      product_scans: {
+        Row: {
+          analysis_status: string
+          brand: string | null
+          created_at: string
+          guest_session_id: string | null
+          id: string
+          input_url: string
+          normalized_url: string | null
+          product_data: Json
+          title: string | null
+          upc_gtin: string | null
+          updated_at: string
+          user_id: string | null
+          walmart_item_id: string | null
+        }
+        Insert: {
+          analysis_status?: string
+          brand?: string | null
+          created_at?: string
+          guest_session_id?: string | null
+          id?: string
+          input_url: string
+          normalized_url?: string | null
+          product_data?: Json
+          title?: string | null
+          upc_gtin?: string | null
+          updated_at?: string
+          user_id?: string | null
+          walmart_item_id?: string | null
+        }
+        Update: {
+          analysis_status?: string
+          brand?: string | null
+          created_at?: string
+          guest_session_id?: string | null
+          id?: string
+          input_url?: string
+          normalized_url?: string | null
+          product_data?: Json
+          title?: string | null
+          upc_gtin?: string | null
+          updated_at?: string
+          user_id?: string | null
+          walmart_item_id?: string | null
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      saved_products: {
+        Row: {
+          created_at: string
+          id: string
+          notes: string | null
+          product_scan_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          notes?: string | null
+          product_scan_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          notes?: string | null
+          product_scan_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "saved_products_product_scan_id_fkey"
+            columns: ["product_scan_id"]
+            isOneToOne: false
+            referencedRelation: "product_scans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      supplier_results: {
+        Row: {
+          authorization_status: string | null
+          case_pack: number | null
+          contact_data: Json
+          country: string | null
+          created_at: string
+          currency: string | null
+          estimated_landed_cost: number | null
+          estimated_shipping: number | null
+          id: string
+          lead_time_days: number | null
+          location: string | null
+          moq: number | null
+          private_label_available: boolean | null
+          product_match: string | null
+          product_scan_id: string
+          sample_available: boolean | null
+          source: string | null
+          supplier_name: string
+          supplier_type: string | null
+          supplier_url: string | null
+          unit_cost: number | null
+          updated_at: string
+          verification_status: string | null
+        }
+        Insert: {
+          authorization_status?: string | null
+          case_pack?: number | null
+          contact_data?: Json
+          country?: string | null
+          created_at?: string
+          currency?: string | null
+          estimated_landed_cost?: number | null
+          estimated_shipping?: number | null
+          id?: string
+          lead_time_days?: number | null
+          location?: string | null
+          moq?: number | null
+          private_label_available?: boolean | null
+          product_match?: string | null
+          product_scan_id: string
+          sample_available?: boolean | null
+          source?: string | null
+          supplier_name: string
+          supplier_type?: string | null
+          supplier_url?: string | null
+          unit_cost?: number | null
+          updated_at?: string
+          verification_status?: string | null
+        }
+        Update: {
+          authorization_status?: string | null
+          case_pack?: number | null
+          contact_data?: Json
+          country?: string | null
+          created_at?: string
+          currency?: string | null
+          estimated_landed_cost?: number | null
+          estimated_shipping?: number | null
+          id?: string
+          lead_time_days?: number | null
+          location?: string | null
+          moq?: number | null
+          private_label_available?: boolean | null
+          product_match?: string | null
+          product_scan_id?: string
+          sample_available?: boolean | null
+          source?: string | null
+          supplier_name?: string
+          supplier_type?: string | null
+          supplier_url?: string | null
+          unit_cost?: number | null
+          updated_at?: string
+          verification_status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "supplier_results_product_scan_id_fkey"
+            columns: ["product_scan_id"]
+            isOneToOne: false
+            referencedRelation: "product_scans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
