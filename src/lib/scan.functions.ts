@@ -12,6 +12,7 @@ type Retrieval = {
   tavily_used: boolean;
   fields_recovered: number;
   fields_missing: string[];
+  provider?: string;
 };
 
 const ANTIBOT_RX = /robot or human\?|are you a human|verify you are human|unusual traffic|access denied|captcha|px-captcha|perimeterx|please enable javascript and cookies|blocked by/i;
@@ -45,6 +46,127 @@ async function resolveUpcToWalmartUrl(upc: string): Promise<{ url?: string; item
     return { url, itemId: m[1] };
   } catch {
     return {};
+  }
+}
+
+// ---- SerpApi (primary provider) ----
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function pickNum(v: any): number | undefined {
+  if (v == null) return undefined;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = parseFloat(v.replace(/[^\d.-]/g, ""));
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function pickInt(v: any): number | undefined {
+  if (v == null) return undefined;
+  if (typeof v === "number" && Number.isFinite(v)) return Math.round(v);
+  if (typeof v === "string") {
+    const n = parseInt(v.replace(/[^\d-]/g, ""), 10);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
+async function fetchSerpApiProduct(itemId: string): Promise<{ product: Partial<ProductData>; ok: boolean; reason?: string }> {
+  const key = process.env.SERPAPI_API_KEY || process.env.SERP_API_KEY;
+  if (!key) return { product: {}, ok: false, reason: "serpapi_missing_key" };
+  const params = new URLSearchParams({ engine: "walmart_product", product_id: itemId, api_key: key });
+  try {
+    const res = await fetch(`https://serpapi.com/search.json?${params.toString()}`, {
+      signal: AbortSignal.timeout(15000),
+    });
+    console.log("[serpapi] status", res.status, "item", itemId);
+    if (!res.ok) return { product: {}, ok: false, reason: `serpapi_http_${res.status}` };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data: any = await res.json();
+    if (data?.error) {
+      console.log("[serpapi] error", String(data.error).slice(0, 200));
+      return { product: {}, ok: false, reason: "serpapi_error" };
+    }
+    console.log("[serpapi] top keys", Object.keys(data || {}).slice(0, 20).join(","));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const p: any = data.product_result || data.product_results || data.product || data;
+    const out: Partial<ProductData> = {
+      product_url: p.product_page_url || p.link || `https://www.walmart.com/ip/${itemId}`,
+      data_source: "serpapi.walmart_product",
+      last_updated: new Date().toISOString(),
+      sources: {},
+    };
+    out.walmart_item_id = itemId;
+    out.sources!.walmart_item_id = "verified";
+
+    const title = p.title || p.product_name || p.name;
+    if (title && typeof title === "string") { out.title = sanitizeTitle(title) || title.trim(); out.sources!.title = "verified"; }
+
+    const brand = p.brand || p.manufacturer;
+    if (brand) { out.brand = String(brand); out.sources!.brand = "verified"; }
+
+    const upc = p.upc || p.gtin || p.gtin13 || p.upc_a;
+    if (upc) { out.upc_gtin = String(upc); out.sources!.upc_gtin = "verified"; }
+
+    const model = p.model || p.model_number;
+    if (model) { out.model = String(model); out.sources!.model = "verified"; }
+
+    // Price: SerpApi walmart_product returns price fields in a few shapes
+    const price = pickNum(
+      p.price?.price ?? p.price?.current_price ?? p.current_price ?? p.primary_offer?.offer_price ?? (typeof p.price === "number" || typeof p.price === "string" ? p.price : undefined),
+    );
+    if (price && price > 0) { out.price = price; out.sources!.price = "verified"; }
+
+    const prev = pickNum(p.price?.was_price ?? p.was_price ?? p.original_price ?? p.list_price);
+    if (prev && prev > 0) { out.previous_price = prev; out.sources!.previous_price = "verified"; }
+
+    const rating = pickNum(p.rating ?? p.reviews?.rating ?? p.rating_value);
+    if (rating != null && rating > 0 && rating <= 5) { out.rating = rating; out.sources!.rating = "verified"; }
+
+    const rc = pickInt(
+      typeof p.reviews === "number" ? p.reviews : (p.reviews?.count ?? p.review_count ?? p.reviews_count ?? p.rating_count ?? p.num_reviews),
+    );
+    if (rc != null && rc >= 0) { out.review_count = rc; out.sources!.review_count = "verified"; }
+
+    // Image
+    let img: string | undefined;
+    if (typeof p.main_image === "string") img = p.main_image;
+    else if (typeof p.primary_image === "string") img = p.primary_image;
+    else if (typeof p.image === "string") img = p.image;
+    else if (Array.isArray(p.images) && p.images.length) {
+      const first = p.images[0];
+      img = typeof first === "string" ? first : (first?.link || first?.url || first?.image);
+    }
+    if (img && /^https?:\/\//.test(img)) { out.image = img; out.sources!.image = "verified"; }
+
+    const seller = p.seller_name || p.seller?.name || p.sold_by || p.marketplace_seller;
+    if (seller) { out.seller = String(seller); out.sources!.seller = "verified"; }
+    const shippedBy = p.shipped_by || p.fulfilled_by;
+    if (shippedBy) { out.shipped_by = String(shippedBy); out.sources!.shipped_by = "verified"; }
+
+    // Category from breadcrumbs or category name
+    let cat: string | undefined;
+    if (Array.isArray(p.breadcrumbs) && p.breadcrumbs.length) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      cat = p.breadcrumbs.map((b: any) => (typeof b === "string" ? b : b?.name || b?.title)).filter(Boolean).join(" / ");
+    } else if (typeof p.category === "string") cat = p.category;
+    else if (p.category?.name) cat = p.category.name;
+    if (cat) { out.category = cat; out.sources!.category = "verified"; }
+
+    // Stock
+    let stock: string | undefined;
+    if (typeof p.availability_status === "string") stock = p.availability_status;
+    else if (typeof p.stock_status === "string") stock = p.stock_status;
+    else if (p.out_of_stock === true) stock = "OutOfStock";
+    else if (p.in_stock === true || p.availability === "InStock") stock = "InStock";
+    if (stock) { out.stock_status = stock; out.sources!.stock_status = "verified"; }
+
+    const ok = !!out.title && !!out.price;
+    console.log("[serpapi] extracted", { title: !!out.title, price: !!out.price, rating: !!out.rating, reviews: !!out.review_count, image: !!out.image });
+    return { product: out, ok, reason: ok ? undefined : "serpapi_incomplete" };
+  } catch (e) {
+    console.log("[serpapi] network_error", String(e).slice(0, 200));
+    return { product: {}, ok: false, reason: "serpapi_network_error" };
   }
 }
 
@@ -270,7 +392,31 @@ async function resolveAndFetch(rawInput: string): Promise<{
 
   let tavilyUsed = false;
   let recovered = 0;
-  const needFallback = status !== "ok" || !product.title || product.price == null;
+  let finalStatus: Retrieval["walmart_status"] = status;
+  let finalReason = reason;
+  let provider = "walmart_html";
+
+  // Primary provider: SerpApi (if we have an itemId). Use before falling back to Tavily.
+  if (itemId && (status !== "ok" || !product.title || product.price == null)) {
+    sourcesTried.push("serpapi");
+    const s = await fetchSerpApiProduct(itemId);
+    if (s.ok) {
+      // Merge — SerpApi values take priority over blocked walmart html
+      for (const [k, v] of Object.entries(s.product)) {
+        if (k === "sources") continue;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (v != null && v !== "") (product as any)[k] = v;
+      }
+      product.sources = { ...(product.sources || {}), ...(s.product.sources || {}) };
+      finalStatus = "ok";
+      finalReason = undefined;
+      provider = "serpapi";
+    } else if (s.reason) {
+      finalReason = finalReason || s.reason;
+    }
+  }
+
+  const needFallback = !product.title || product.price == null;
   if (needFallback) {
     sourcesTried.push("tavily");
     const r = await tavilyFallback(product, { itemId, upc, url: normalizedUrl });
@@ -283,12 +429,13 @@ async function resolveAndFetch(rawInput: string): Promise<{
   for (const k of keys) if (product[k] == null || product[k] === "") missing.push(String(k));
 
   const retrieval: Retrieval = {
-    walmart_status: status,
-    walmart_reason: reason,
+    walmart_status: finalStatus,
+    walmart_reason: finalReason,
     sources_tried: sourcesTried,
     tavily_used: tavilyUsed,
     fields_recovered: recovered,
     fields_missing: missing,
+    provider,
   };
   return { normalizedUrl, itemId, upc, product, retrieval };
 }
