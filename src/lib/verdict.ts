@@ -64,7 +64,7 @@ export function evaluate(product: ProductData, calc: CalcResult, hasSupplier: bo
   const confidence = Math.round((filled / fields.length) * 100);
 
   const reasons: string[] = [];
-  const canCalc = (product.price ?? 0) > 0 && (product.unit_cost ?? 0) > 0;
+  const canCalc = (product.price ?? 0) > 0 && calc.landedCost > 0;
   if (canCalc) {
     reasons.push(`Estimated profit is $${calc.estimatedProfit.toFixed(2)} per unit.`);
     reasons.push(`ROI is ${calc.roi.toFixed(0)}%.`);
