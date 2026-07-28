@@ -25,6 +25,7 @@ export function VerdictCard({ v, calc, walmartPrice, bestSupplierName, quantity,
   const recTest = Math.max(5, Math.min(50, Math.round((walmartPrice ? 250 / walmartPrice : 20))));
   const na = "—";
   const showCalc = canCalc !== false;
+  const showScore = v.verdict !== "INSUFFICIENT_DATA" && v.confidence > 0 && showCalc;
   return (
     <div className="rounded-2xl border bg-card p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -35,8 +36,17 @@ export function VerdictCard({ v, calc, walmartPrice, bestSupplierName, quantity,
           <div className="mt-2 text-sm text-muted-foreground">{v.nextAction}</div>
         </div>
         <div className="text-right">
-          <div className="text-3xl font-bold text-foreground">{v.opportunityScore}</div>
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Opportunity</div>
+          {showScore ? (
+            <>
+              <div className="text-3xl font-bold text-foreground">{v.opportunityScore}</div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Opportunity</div>
+            </>
+          ) : (
+            <>
+              <div className="text-lg font-semibold text-muted-foreground">Score pending</div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">More verified data required</div>
+            </>
+          )}
           <div className="mt-1 text-xs">
             <Badge variant="outline">{confLabel} confidence · {v.confidence}%</Badge>
           </div>
