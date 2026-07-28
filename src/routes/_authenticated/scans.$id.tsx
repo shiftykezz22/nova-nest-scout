@@ -5,6 +5,8 @@ import type { ProductData } from "@/lib/walmart";
 import type { Supplier } from "@/lib/suppliers";
 import { ResultView } from "@/components/ResultView";
 import { PageHeader } from "@/components/AppShell";
+import { ErrorPanel } from "@/components/ErrorPanel";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/scans/$id")({
@@ -22,10 +24,11 @@ function ScanDetail() {
   const { id } = useParams({ from: "/_authenticated/scans/$id" });
   const [product, setProduct] = useState<ProductData | null>(null);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [notFound, setNotFound] = useState(false);
   useEffect(() => {
     (async () => {
       const { data, error } = await supabase.from("product_scans").select("id, input_url, product_data").eq("id", id).maybeSingle();
-      if (error || !data) { toast.error("Scan not found"); return; }
+      if (error || !data) { setNotFound(true); return; }
       setProduct((data.product_data as ProductData) ?? {});
       const { data: sup } = await supabase.from("supplier_results").select("*").eq("product_scan_id", id);
       setSuppliers((sup ?? []).map((r): Supplier => ({
@@ -51,7 +54,8 @@ function ScanDetail() {
       return merged;
     });
   }
-  if (!product) return <div className="text-sm text-muted-foreground">Loading…</div>;
+  if (notFound) return <ErrorPanel title="Scan not found" message="We couldn't find this scan. It may have been deleted or belongs to a different account." />;
+  if (!product) return <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading scan…</div>;
   return (
     <>
       <PageHeader title={product.title || "Scan"} subtitle={product.brand} />
