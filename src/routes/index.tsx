@@ -86,16 +86,15 @@ function Landing() {
 
         <div className="mt-8 rounded-2xl border bg-card p-4 shadow-sm md:p-6">
           <label className="text-left block text-sm font-semibold text-foreground">
-            Paste Walmart Product URL
+            Walmart URL, UPC / GTIN, or item ID
             <span className="text-primary"> *</span>
           </label>
           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
             <Input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://www.walmart.com/ip/..."
+              placeholder="walmart.com/ip/... · UPC (12-14 digits) · item ID"
               className="h-12 rounded-xl text-base"
-              inputMode="url"
             />
             <Button onClick={onScan} disabled={loading || !url} size="lg" className="h-12 rounded-xl">
               {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
