@@ -15,6 +15,7 @@ import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedScansRouteImport } from './routes/_authenticated/scans'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
+import { Route as AuthenticatedScansIdRouteImport } from './routes/_authenticated/scans.$id'
 
 const GuestResultRoute = GuestResultRouteImport.update({
   id: '/guest-result',
@@ -45,20 +46,27 @@ const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedScansIdRoute = AuthenticatedScansIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => AuthenticatedScansRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/guest-result': typeof GuestResultRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
-  '/scans': typeof AuthenticatedScansRoute
+  '/scans': typeof AuthenticatedScansRouteWithChildren
+  '/scans/$id': typeof AuthenticatedScansIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/guest-result': typeof GuestResultRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
-  '/scans': typeof AuthenticatedScansRoute
+  '/scans': typeof AuthenticatedScansRouteWithChildren
+  '/scans/$id': typeof AuthenticatedScansIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -67,13 +75,20 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/guest-result': typeof GuestResultRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
-  '/_authenticated/scans': typeof AuthenticatedScansRoute
+  '/_authenticated/scans': typeof AuthenticatedScansRouteWithChildren
+  '/_authenticated/scans/$id': typeof AuthenticatedScansIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth' | '/guest-result' | '/dashboard' | '/scans'
+  fullPaths:
+    | '/'
+    | '/auth'
+    | '/guest-result'
+    | '/dashboard'
+    | '/scans'
+    | '/scans/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/guest-result' | '/dashboard' | '/scans'
+  to: '/' | '/auth' | '/guest-result' | '/dashboard' | '/scans' | '/scans/$id'
   id:
     | '__root__'
     | '/'
@@ -82,6 +97,7 @@ export interface FileRouteTypes {
     | '/guest-result'
     | '/_authenticated/dashboard'
     | '/_authenticated/scans'
+    | '/_authenticated/scans/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -135,17 +151,35 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDashboardRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/scans/$id': {
+      id: '/_authenticated/scans/$id'
+      path: '/$id'
+      fullPath: '/scans/$id'
+      preLoaderRoute: typeof AuthenticatedScansIdRouteImport
+      parentRoute: typeof AuthenticatedScansRoute
+    }
   }
 }
 
+interface AuthenticatedScansRouteChildren {
+  AuthenticatedScansIdRoute: typeof AuthenticatedScansIdRoute
+}
+
+const AuthenticatedScansRouteChildren: AuthenticatedScansRouteChildren = {
+  AuthenticatedScansIdRoute: AuthenticatedScansIdRoute,
+}
+
+const AuthenticatedScansRouteWithChildren =
+  AuthenticatedScansRoute._addFileChildren(AuthenticatedScansRouteChildren)
+
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
-  AuthenticatedScansRoute: typeof AuthenticatedScansRoute
+  AuthenticatedScansRoute: typeof AuthenticatedScansRouteWithChildren
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
-  AuthenticatedScansRoute: AuthenticatedScansRoute,
+  AuthenticatedScansRoute: AuthenticatedScansRouteWithChildren,
 }
 
 const AuthenticatedRouteRouteWithChildren =
