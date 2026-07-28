@@ -817,3 +817,90 @@ export const analyzeProductGuest = createServerFn({ method: "POST" })
     (product as any).retrieval = retrieval;
     return { normalized_url: normalizedUrl, itemId, product, retrieval };
   });
+
+// List raw observation rows for a scan; used by the sources panel to show
+// retrieved-at and cross-check status per field.
+export const listObservations = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((data: { scanId?: string }) => data)
+  .handler(async ({ data, context }) => {
+    const scanId = (data.scanId || "").trim();
+    if (!scanId) return { rows: [] };
+    const { data: rows, error } = await context.supabase
+      .from("product_observations")
+      .select("field_name, source_name, source_url, verification_status, confidence, retrieved_at, is_selected_value")
+      .eq("scan_id", scanId)
+      .order("retrieved_at", { ascending: false });
+    if (error) return { rows: [] };
+    return { rows: rows ?? [] };
+  });
+
+// Re-run the retrieval pipeline against the same scan id (owner-only).
+export const refreshScan = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((data: { scanId?: string }) => data)
+  .handler(async ({ data, context }) => {
+    const scanId = (data.scanId || "").trim();
+    if (!scanId) throw new Error("Missing scan id.");
+    const { data: existing, error: readErr } = await context.supabase
+      .from("product_scans")
+      .select("id, input_url, user_id")
+      .eq("id", scanId)
+      .maybeSingle();
+    if (readErr) throw new Error(readErr.message);
+    if (!existing) throw new Error("Scan not found.");
+    if (existing.user_id !== context.userId) throw new Error("Not authorized.");
+    const raw = String(existing.input_url || "").trim();
+    if (!raw) throw new Error("Original input missing; cannot refresh.");
+    const started = Date.now();
+    const { normalizedUrl, itemId, product, retrieval } = await resolveAndFetch(raw);
+    const cross = (product.title || product.upc_gtin || (product.brand && product.model))
+      ? await runCrossChecks(product)
+      : { barcode: { status: "skipped" as const }, manufacturer: { status: "skipped" as const }, retail: { status: "skipped" as const, offers: [] as RetailOffer[] }, observations: [] };
+    if (cross.retail.offers.length) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (product as any).retail_offers = cross.retail.offers;
+    }
+    retrieval.stages = [
+      { name: "Reading product input", status: "ok" },
+      { name: "Identifying Walmart item", status: itemId ? "ok" : "skipped" },
+      { name: "Retrieving Walmart data", status: retrieval.walmart_status === "ok" ? "ok" : retrieval.walmart_status === "blocked" ? "error" : "skipped", note: retrieval.walmart_reason },
+      { name: "SerpApi verification", status: retrieval.sources_tried.includes("serpapi") ? (retrieval.provider === "serpapi" ? "ok" : "error") : "skipped" },
+      { name: "Tavily fallback", status: retrieval.tavily_used ? "ok" : "skipped" },
+      { name: "Extracting barcode", status: cross.barcode.status, note: cross.barcode.note },
+      { name: "Verifying manufacturer", status: cross.manufacturer.status, note: cross.manufacturer.note },
+      { name: "Comparing retail prices", status: cross.retail.status, note: cross.retail.note },
+      { name: "Product identity fingerprint", status: (product.brand && (product.model || product.manufacturer_part_number)) ? "ok" : "skipped" },
+      { name: "Building verdict", status: product.title && product.price != null ? "ok" : "skipped" },
+    ];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (product as any).retrieval = retrieval;
+    product.scanned_at = new Date().toISOString();
+    const { error: updErr } = await context.supabase
+      .from("product_scans")
+      .update({
+        normalized_url: normalizedUrl,
+        walmart_item_id: itemId || null,
+        title: product.title || null,
+        brand: product.brand || null,
+        upc_gtin: product.upc_gtin || null,
+        product_data: product,
+        analysis_status: product.title ? "retrieved" : "manual_required",
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", scanId);
+    if (updErr) throw new Error(updErr.message);
+    await context.supabase.from("scan_sources").insert(
+      retrieval.sources_tried.map((p) => ({
+        scan_id: scanId,
+        provider_name: p,
+        request_type: p === "walmart" ? "html" : "api",
+        request_status: (p === "serpapi" && retrieval.provider === "serpapi") || (p === "walmart" && retrieval.walmart_status === "ok") || (p === "tavily" && retrieval.tavily_used) ? "ok" : "skipped",
+        source_url: p === "walmart" ? normalizedUrl : null,
+        records_returned: p === "tavily" ? retrieval.fields_recovered : (retrieval.provider === p ? 1 : 0),
+        latency_ms: Date.now() - started,
+        completed_at: new Date().toISOString(),
+      })),
+    );
+    return { id: scanId, product };
+  });
