@@ -122,12 +122,18 @@ export type Database = {
         Row: {
           analysis_status: string
           brand: string | null
+          completed_at: string | null
           created_at: string
+          data_completeness_score: number | null
+          error_code: string | null
+          error_message: string | null
           guest_session_id: string | null
           id: string
+          input_type: string | null
           input_url: string
           normalized_url: string | null
           product_data: Json
+          product_match_confidence: number | null
           title: string | null
           upc_gtin: string | null
           updated_at: string
@@ -137,12 +143,18 @@ export type Database = {
         Insert: {
           analysis_status?: string
           brand?: string | null
+          completed_at?: string | null
           created_at?: string
+          data_completeness_score?: number | null
+          error_code?: string | null
+          error_message?: string | null
           guest_session_id?: string | null
           id?: string
+          input_type?: string | null
           input_url: string
           normalized_url?: string | null
           product_data?: Json
+          product_match_confidence?: number | null
           title?: string | null
           upc_gtin?: string | null
           updated_at?: string
@@ -152,12 +164,18 @@ export type Database = {
         Update: {
           analysis_status?: string
           brand?: string | null
+          completed_at?: string | null
           created_at?: string
+          data_completeness_score?: number | null
+          error_code?: string | null
+          error_message?: string | null
           guest_session_id?: string | null
           id?: string
+          input_type?: string | null
           input_url?: string
           normalized_url?: string | null
           product_data?: Json
+          product_match_confidence?: number | null
           title?: string | null
           upc_gtin?: string | null
           updated_at?: string

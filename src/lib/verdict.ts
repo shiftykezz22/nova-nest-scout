@@ -13,6 +13,7 @@ export const VERDICT_THRESHOLDS = {
 
 export type VerdictResult = {
   verdict: Verdict;
+  label: string;
   confidence: number;
   opportunityScore: number;
   scores: { demand: number; profit: number; competition: number; supplier: number; risk: number };
@@ -20,6 +21,7 @@ export type VerdictResult = {
   missing: string[];
   nextAction: string;
   risks: string[];
+  positives: string[];
 };
 
 export function detectRisks(p: ProductData): string[] {
@@ -64,37 +66,55 @@ export function evaluate(product: ProductData, calc: CalcResult, hasSupplier: bo
   const confidence = Math.round((filled / fields.length) * 100);
 
   const reasons: string[] = [];
+  const positives: string[] = [];
   const canCalc = (product.price ?? 0) > 0 && calc.landedCost > 0;
   if (canCalc) {
     reasons.push(`Estimated profit is $${calc.estimatedProfit.toFixed(2)} per unit.`);
     reasons.push(`ROI is ${calc.roi.toFixed(0)}%.`);
     reasons.push(`Profit margin is ${calc.profitMargin.toFixed(0)}%.`);
+    if (calc.estimatedProfit > 0) positives.push(`Positive profit per unit ($${calc.estimatedProfit.toFixed(2)}).`);
+    if (calc.roi >= 30) positives.push(`ROI meets 30% threshold.`);
+    if (calc.profitMargin >= 15) positives.push(`Margin above 15%.`);
   } else {
     reasons.push("Profit, ROI, and margin cannot be calculated without both selling price and unit cost.");
   }
+  if (product.upc_gtin) positives.push("UPC / GTIN retrieved.");
+  if (product.brand && product.model) positives.push("Brand and model identified.");
+  if ((product.review_count ?? 0) >= 100 && (product.rating ?? 0) >= 4) positives.push("Strong customer feedback signals.");
 
   const criticalRisk = risks.some((r) => /hazardous/i.test(r));
   let verdict: Verdict;
+  let label: string;
   let nextAction: string;
   if (missing.length >= 3 || confidence < 40) {
     verdict = "INSUFFICIENT_DATA";
+    label = "Insufficient Data";
     nextAction = "Fill in the missing fields below to get a recommendation.";
   } else if (!canCalc) {
     verdict = "INSUFFICIENT_DATA";
+    label = "Insufficient Data";
     nextAction = "Enter a selling price and unit cost to calculate profit.";
   } else if (calc.estimatedProfit < 0 || calc.roi < 10 || calc.profitMargin < 5 || criticalRisk || risks.length >= 4) {
     verdict = "SKIP";
+    label = "High Risk";
     nextAction = "This product does not meet minimum profit or risk requirements.";
   } else if (calc.estimatedProfit >= 5 && calc.roi >= 30 && calc.profitMargin >= 15 && hasSupplier && risks.length === 0) {
     verdict = "BUY";
+    label = "Strong Buy Candidate";
     nextAction = "Order a sample from your supplier and validate shipping.";
+  } else if (calc.profitMargin < 12 || calc.roi < 20) {
+    verdict = "REVIEW";
+    label = "Borderline";
+    nextAction = "Margins are thin — verify fees, shipping, and demand before ordering.";
   } else {
     verdict = "REVIEW";
+    label = "Promising — Verify Supplier";
     nextAction = "Confirm freight cost and demand estimate before ordering.";
   }
 
   return {
     verdict,
+    label,
     confidence,
     opportunityScore,
     scores: {
@@ -108,5 +128,6 @@ export function evaluate(product: ProductData, calc: CalcResult, hasSupplier: bo
     missing,
     nextAction,
     risks,
+    positives,
   };
 }

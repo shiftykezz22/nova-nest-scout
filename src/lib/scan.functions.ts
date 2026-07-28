@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { ProductData } from "./walmart";
 import { identifyInput } from "./walmart";
+import { productFingerprint, classifyMatch } from "./matching";
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -369,6 +370,126 @@ async function tavilyFallback(product: Partial<ProductData>, ctx: { itemId?: str
   return { used: true, recovered };
 }
 
+// ---- Cross-check stages (barcode / manufacturer / retail) ----
+type CrossCheckResult = {
+  barcode: { status: "ok" | "skipped" | "error"; note?: string; matches?: number };
+  manufacturer: { status: "ok" | "skipped" | "error"; note?: string };
+  retail: { status: "ok" | "skipped" | "error"; note?: string; offers: RetailOffer[] };
+  observations: Array<{ field_name: string; source_name: string; source_url?: string; value: string; verification_status: string }>;
+};
+
+export type RetailOffer = {
+  retailer_name?: string;
+  offer_url?: string;
+  price?: number;
+  match_confidence?: number;
+  match_class?: "exact" | "strong" | "possible" | "rejected";
+  retrieved_at?: string;
+};
+
+function retailerFromUrl(u: string): string | undefined {
+  try {
+    const host = new URL(u).hostname.replace(/^www\./, "").toLowerCase();
+    if (!host || /walmart\.com/.test(host)) return undefined;
+    const base = host.split(".")[0];
+    return base.charAt(0).toUpperCase() + base.slice(1);
+  } catch { return undefined; }
+}
+
+async function runCrossChecks(product: Partial<ProductData>): Promise<CrossCheckResult> {
+  const key = readTavilyKey();
+  const out: CrossCheckResult = {
+    barcode: { status: "skipped" },
+    manufacturer: { status: "skipped" },
+    retail: { status: "skipped", offers: [] },
+    observations: [],
+  };
+  if (!key) return out;
+  const ref = productFingerprint(product);
+  const upc = product.upc_gtin || product.gtin || product.ean;
+  const brand = product.brand;
+  const model = product.model || product.manufacturer_part_number;
+
+  // Barcode verification
+  if (upc) {
+    const rs = await tavilySearch(key, `"${upc}" product brand model`, 5);
+    let matched = 0;
+    for (const r of rs.slice(0, 5)) {
+      const hay = `${r.title}\n${r.content}`.toLowerCase();
+      if (brand && hay.includes(brand.toLowerCase())) matched += 1;
+      if (model && hay.includes(String(model).toLowerCase())) matched += 1;
+    }
+    if (rs.length) {
+      out.barcode = { status: "ok", matches: matched, note: `${rs.length} sources · ${matched} attribute hits` };
+      // Cross-check UPC observation
+      if (matched >= 1) {
+        out.observations.push({
+          field_name: "upc_gtin",
+          source_name: "tavily.barcode",
+          source_url: rs[0]?.url,
+          value: String(upc),
+          verification_status: "cross_checked",
+        });
+      }
+    } else {
+      out.barcode = { status: "ok", matches: 0, note: "No barcode sources returned" };
+    }
+  }
+
+  // Manufacturer verification
+  if (brand && model) {
+    const rs = await tavilySearch(key, `${brand} ${model} specifications site:${String(brand).toLowerCase()}.com OR manufacturer product page`, 4);
+    if (rs.length) {
+      out.manufacturer = { status: "ok", note: `${rs.length} manufacturer-side sources` };
+      out.observations.push({
+        field_name: "model",
+        source_name: "tavily.manufacturer",
+        source_url: rs[0]?.url,
+        value: String(model),
+        verification_status: "cross_checked",
+      });
+    } else {
+      out.manufacturer = { status: "ok", note: "No manufacturer sources returned" };
+    }
+  }
+
+  // Retail comparables (exclude walmart)
+  const q = upc ? `"${upc}" price` : brand && model ? `"${brand}" "${model}" price` : product.title ? `"${product.title}" price` : undefined;
+  if (q) {
+    const rs = await tavilySearch(key, `${q} -site:walmart.com`, 8);
+    const offers: RetailOffer[] = [];
+    for (const r of rs) {
+      if (/walmart\.com/i.test(r.url)) continue;
+      const retailer = retailerFromUrl(r.url);
+      const hay = `${r.title}\n${r.content}`;
+      const priceMatch = hay.match(/\$\s?(\d{1,4}(?:\.\d{2}))/);
+      const price = priceMatch ? parseFloat(priceMatch[1]) : undefined;
+      // build a candidate fingerprint from title text
+      const t = hay.toLowerCase();
+      const cand = {
+        brand: ref.brand && t.includes(ref.brand) ? ref.brand : undefined,
+        model: ref.model && t.includes(ref.model) ? ref.model : undefined,
+        upc: ref.upc && t.includes(ref.upc) ? ref.upc : undefined,
+      };
+      const { cls, reasons } = classifyMatch(cand, ref);
+      if (cls === "rejected") continue;
+      offers.push({
+        retailer_name: retailer,
+        offer_url: r.url,
+        price: price && price > 0 && price < 20000 ? price : undefined,
+        match_class: cls,
+        match_confidence: cls === "exact" ? 100 : cls === "strong" ? 75 : 50,
+        retrieved_at: new Date().toISOString(),
+      });
+      if (offers.length >= 8) break;
+      void reasons;
+    }
+    out.retail = { status: "ok", note: `${offers.length} comparable offers`, offers };
+  }
+
+  return out;
+}
+
 // Resolves a raw user input (URL, UPC/GTIN, or item ID) into a normalized
 // Walmart URL + product data. Returns product-only fields; never throws for
 // missing product data — only for invalid input.
@@ -488,19 +609,42 @@ export const analyzeProduct = createServerFn({ method: "POST" })
     if (!raw) throw new Error("Enter a Walmart URL, UPC / GTIN, or item ID.");
     const started = Date.now();
     const { normalizedUrl, itemId, product, retrieval } = await resolveAndFetch(raw);
-    // Build a real stages array reflecting what actually ran.
+    // Cross-check stages (barcode / manufacturer / retail) — only when Walmart identity exists.
+    const cross = (product.title || product.upc_gtin || (product.brand && product.model))
+      ? await runCrossChecks(product)
+      : { barcode: { status: "skipped" as const }, manufacturer: { status: "skipped" as const }, retail: { status: "skipped" as const, offers: [] as RetailOffer[] }, observations: [] };
+    if (cross.retail.offers.length) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (product as any).retail_offers = cross.retail.offers;
+    }
+    // Build the real 10-stage array.
     const stages: NonNullable<ProductData["retrieval"]>["stages"] = [
-      { name: "Identify input", status: "ok" },
-      { name: "Retrieve Walmart data", status: retrieval.walmart_status === "ok" ? "ok" : retrieval.walmart_status === "blocked" ? "error" : "skipped", note: retrieval.walmart_reason },
+      { name: "Reading product input", status: "ok" },
+      { name: "Identifying Walmart item", status: itemId ? "ok" : "skipped", note: itemId ? `Item ${itemId}` : undefined },
+      { name: "Retrieving Walmart data", status: retrieval.walmart_status === "ok" ? "ok" : retrieval.walmart_status === "blocked" ? "error" : "skipped", note: retrieval.walmart_reason },
       { name: "SerpApi verification", status: retrieval.sources_tried.includes("serpapi") ? (retrieval.provider === "serpapi" ? "ok" : "error") : "skipped" },
       { name: "Tavily fallback", status: retrieval.tavily_used ? "ok" : "skipped", note: retrieval.tavily_used ? `${retrieval.fields_recovered} fields recovered` : undefined },
-      { name: "Build verdict", status: product.title && product.price != null ? "ok" : "skipped" },
+      { name: "Extracting barcode", status: cross.barcode.status, note: cross.barcode.note },
+      { name: "Verifying manufacturer", status: cross.manufacturer.status, note: cross.manufacturer.note },
+      { name: "Comparing retail prices", status: cross.retail.status, note: cross.retail.note },
+      { name: "Product identity fingerprint", status: (product.brand && (product.model || product.manufacturer_part_number)) ? "ok" : "skipped" },
+      { name: "Building verdict", status: product.title && product.price != null ? "ok" : "skipped" },
     ];
     retrieval.stages = stages;
     const status = product.title ? "retrieved" : "manual_required";
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (product as any).retrieval = retrieval;
     product.scanned_at = new Date().toISOString();
+    // Product match confidence + data completeness (0-100).
+    const keys: (keyof ProductData)[] = ["title", "price", "brand", "image", "rating", "review_count", "upc_gtin", "model", "seller", "category"];
+    const filled = keys.filter((k) => product[k] != null && product[k] !== "").length;
+    const dataCompleteness = Math.round((filled / keys.length) * 100);
+    let matchConfidence = 40;
+    if (product.upc_gtin) matchConfidence += 25;
+    if (product.brand && product.model) matchConfidence += 20;
+    if (product.manufacturer_part_number) matchConfidence += 10;
+    if (cross.barcode.status === "ok" && (cross.barcode.matches ?? 0) >= 1) matchConfidence += 10;
+    matchConfidence = Math.min(100, matchConfidence);
     const { data: row, error } = await context.supabase
       .from("product_scans")
       .insert({
@@ -513,6 +657,10 @@ export const analyzeProduct = createServerFn({ method: "POST" })
         upc_gtin: product.upc_gtin || null,
         product_data: product,
         analysis_status: status,
+        input_type: (identifyInput(raw) as { kind?: string }).kind ?? null,
+        product_match_confidence: matchConfidence,
+        data_completeness_score: dataCompleteness,
+        completed_at: new Date().toISOString(),
       })
       .select("id")
       .single();
@@ -528,16 +676,37 @@ export const analyzeProduct = createServerFn({ method: "POST" })
       latency_ms: Date.now() - started,
       completed_at: new Date().toISOString(),
     }));
+    // Add rows for cross-check stages so the sources log is complete.
+    for (const [name, s] of [["tavily.barcode", cross.barcode], ["tavily.manufacturer", cross.manufacturer], ["tavily.retail", cross.retail]] as const) {
+      scanSources.push({
+        scan_id: row.id,
+        provider_name: name,
+        request_type: "api",
+        request_status: s.status,
+        source_url: null,
+        records_returned: name === "tavily.retail" ? cross.retail.offers.length : (s.status === "ok" ? 1 : 0),
+        latency_ms: Date.now() - started,
+        completed_at: new Date().toISOString(),
+      });
+    }
     if (scanSources.length) {
       await context.supabase.from("scan_sources").insert(scanSources);
     }
     // Log observations for each core field with a source, so the Sources panel has data.
     type ObsRow = { scan_id: string; field_name: string; raw_value: string; normalized_value: string; source_name: string; source_url: string | null; verification_status: string; confidence: number; is_selected_value: boolean };
     const obs: ObsRow[] = [];
+    const upgradedFields = new Map<string, { status: string; source: string; url?: string }>();
+    for (const o of cross.observations) {
+      upgradedFields.set(o.field_name, { status: o.verification_status, source: o.source_name, url: o.source_url });
+    }
     for (const [k, src] of Object.entries(product.sources ?? {})) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const v = (product as any)[k];
       if (v == null || v === "") continue;
+      const upgrade = upgradedFields.get(k);
+      const baseStatus = src === "verified" ? "verified" : src === "public" ? "single_source" : src === "user" ? "user_entered" : src === "estimated" ? "estimated" : "unavailable";
+      const finalStatus = upgrade?.status ?? baseStatus;
+      const confidence = finalStatus === "cross_checked" ? 95 : finalStatus === "verified" ? 90 : finalStatus === "user_entered" ? 100 : finalStatus === "single_source" ? 70 : finalStatus === "estimated" ? 40 : 0;
       obs.push({
         scan_id: row.id,
         field_name: k,
@@ -545,13 +714,26 @@ export const analyzeProduct = createServerFn({ method: "POST" })
         normalized_value: String(v).slice(0, 500),
         source_name: retrieval.provider || "walmart_html",
         source_url: normalizedUrl,
-        verification_status: src === "verified" ? "verified" : src === "public" ? "single_source" : src === "user" ? "user_entered" : src === "estimated" ? "estimated" : "unavailable",
-        confidence: src === "verified" ? 90 : src === "public" ? 70 : src === "user" ? 100 : src === "estimated" ? 40 : 0,
+        verification_status: finalStatus,
+        confidence,
         is_selected_value: true,
       });
+      if (upgrade) {
+        obs.push({
+          scan_id: row.id,
+          field_name: k,
+          raw_value: String(v).slice(0, 500),
+          normalized_value: String(v).slice(0, 500),
+          source_name: upgrade.source,
+          source_url: upgrade.url || null,
+          verification_status: "cross_checked",
+          confidence: 95,
+          is_selected_value: false,
+        });
+      }
     }
     if (obs.length) await context.supabase.from("product_observations").insert(obs);
-    return { id: row.id, status, product, retrieval };
+    return { id: row.id, status, product, retrieval, matchConfidence, dataCompleteness };
   });
 
 // Search up to 5 Walmart product candidates matching the input.
@@ -634,4 +816,91 @@ export const analyzeProductGuest = createServerFn({ method: "POST" })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (product as any).retrieval = retrieval;
     return { normalized_url: normalizedUrl, itemId, product, retrieval };
+  });
+
+// List raw observation rows for a scan; used by the sources panel to show
+// retrieved-at and cross-check status per field.
+export const listObservations = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((data: { scanId?: string }) => data)
+  .handler(async ({ data, context }) => {
+    const scanId = (data.scanId || "").trim();
+    if (!scanId) return { rows: [] };
+    const { data: rows, error } = await context.supabase
+      .from("product_observations")
+      .select("field_name, source_name, source_url, verification_status, confidence, retrieved_at, is_selected_value")
+      .eq("scan_id", scanId)
+      .order("retrieved_at", { ascending: false });
+    if (error) return { rows: [] };
+    return { rows: rows ?? [] };
+  });
+
+// Re-run the retrieval pipeline against the same scan id (owner-only).
+export const refreshScan = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((data: { scanId?: string }) => data)
+  .handler(async ({ data, context }) => {
+    const scanId = (data.scanId || "").trim();
+    if (!scanId) throw new Error("Missing scan id.");
+    const { data: existing, error: readErr } = await context.supabase
+      .from("product_scans")
+      .select("id, input_url, user_id")
+      .eq("id", scanId)
+      .maybeSingle();
+    if (readErr) throw new Error(readErr.message);
+    if (!existing) throw new Error("Scan not found.");
+    if (existing.user_id !== context.userId) throw new Error("Not authorized.");
+    const raw = String(existing.input_url || "").trim();
+    if (!raw) throw new Error("Original input missing; cannot refresh.");
+    const started = Date.now();
+    const { normalizedUrl, itemId, product, retrieval } = await resolveAndFetch(raw);
+    const cross = (product.title || product.upc_gtin || (product.brand && product.model))
+      ? await runCrossChecks(product)
+      : { barcode: { status: "skipped" as const }, manufacturer: { status: "skipped" as const }, retail: { status: "skipped" as const, offers: [] as RetailOffer[] }, observations: [] };
+    if (cross.retail.offers.length) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (product as any).retail_offers = cross.retail.offers;
+    }
+    retrieval.stages = [
+      { name: "Reading product input", status: "ok" },
+      { name: "Identifying Walmart item", status: itemId ? "ok" : "skipped" },
+      { name: "Retrieving Walmart data", status: retrieval.walmart_status === "ok" ? "ok" : retrieval.walmart_status === "blocked" ? "error" : "skipped", note: retrieval.walmart_reason },
+      { name: "SerpApi verification", status: retrieval.sources_tried.includes("serpapi") ? (retrieval.provider === "serpapi" ? "ok" : "error") : "skipped" },
+      { name: "Tavily fallback", status: retrieval.tavily_used ? "ok" : "skipped" },
+      { name: "Extracting barcode", status: cross.barcode.status, note: cross.barcode.note },
+      { name: "Verifying manufacturer", status: cross.manufacturer.status, note: cross.manufacturer.note },
+      { name: "Comparing retail prices", status: cross.retail.status, note: cross.retail.note },
+      { name: "Product identity fingerprint", status: (product.brand && (product.model || product.manufacturer_part_number)) ? "ok" : "skipped" },
+      { name: "Building verdict", status: product.title && product.price != null ? "ok" : "skipped" },
+    ];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (product as any).retrieval = retrieval;
+    product.scanned_at = new Date().toISOString();
+    const { error: updErr } = await context.supabase
+      .from("product_scans")
+      .update({
+        normalized_url: normalizedUrl,
+        walmart_item_id: itemId || null,
+        title: product.title || null,
+        brand: product.brand || null,
+        upc_gtin: product.upc_gtin || null,
+        product_data: product,
+        analysis_status: product.title ? "retrieved" : "manual_required",
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", scanId);
+    if (updErr) throw new Error(updErr.message);
+    await context.supabase.from("scan_sources").insert(
+      retrieval.sources_tried.map((p) => ({
+        scan_id: scanId,
+        provider_name: p,
+        request_type: p === "walmart" ? "html" : "api",
+        request_status: (p === "serpapi" && retrieval.provider === "serpapi") || (p === "walmart" && retrieval.walmart_status === "ok") || (p === "tavily" && retrieval.tavily_used) ? "ok" : "skipped",
+        source_url: p === "walmart" ? normalizedUrl : null,
+        records_returned: p === "tavily" ? retrieval.fields_recovered : (retrieval.provider === p ? 1 : 0),
+        latency_ms: Date.now() - started,
+        completed_at: new Date().toISOString(),
+      })),
+    );
+    return { id: scanId, product };
   });

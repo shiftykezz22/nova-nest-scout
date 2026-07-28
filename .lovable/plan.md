@@ -1,158 +1,118 @@
-# Phase 4 — Product Data, Matching, Profit & Source Verification
+# Phase 4 — Complete Product Data, Matching, Profit & Source Verification
 
-Phase 4 is a very large spec. To ship reliably without regressing Phase 3, I'll build it in one coherent pass focused on the user-visible pipeline, while adding the storage/observation layer that unlocks the remaining pieces incrementally. I will preserve the working SerpApi + Tavily retrieval, the red/white design, guest flow, and all existing routes, also make sure when I place a url it can find the exact Walmart information.
+Goal: finish the Phase 4 pipeline in one Build by hardening Phase 3, filling gaps in identifier extraction, cross-checking, retail comparables, source transparency, and per-tab views — without a rewrite. Keep SerpApi + Tavily, the red/white design, guest flow, `product_scans`/`supplier_results`, and the 5-tab layout intact.
 
-## What already works (keep as-is)
+## What already exists (preserve)
 
-- SerpApi `walmart_product` → Tavily fallback pipeline, anti-bot detection
-- `product_scans` persistence, scan-id routing, guest one-scan flow
-- Verdict engine w/ thresholds, `INSUFFICIENT_DATA` state
-- Profitability panel w/ live recalculation, override sheet
-- Supplier discovery (Brooklyn default, radius, Tavily-powered)
-- Red/white design system, `_authenticated` gate, auth flows
+- SerpApi `walmart_product` + Tavily fallback pipeline with anti-bot detection
+- `identifyInput()` supporting URL / item_id / UPC / keyword
+- `searchWalmartMatches()` returning up to 5 candidates (SerpApi `walmart` search)
+- `product_scans`, `product_observations`, `scan_sources`, `supplier_results` tables (RLS scoped by scan ownership)
+- 5-tab `ResultTabs` (Overview / Suppliers / Profit / Market / Verdict), `ProductHero`, `ProfitabilityPanel`, `SupplierDiscovery`, `SourcesPanel`, `VerdictCard`
+- Guest one-scan flow, `_authenticated` gate, auth, `/scans/$id` and `/guest-result` routes
+- `analyzeProduct` writes `scan_sources` + per-field `product_observations`
 
-## What I will build
+## Gaps this Build closes
 
-### 1. Input identification & multi-match search
+1. **URL preview + confirmation** — direct URLs currently auto-navigate to the result page. Add a "Confirm this product" preview card on `dashboard` + `index` after retrieval, before analyze commits (dashboard already has a search picker for keywords/UPC; add a similar single-card confirmation for URL/item_id).
+2. **Barcode verification (Stage 3)** — no cross-check runs against a barcode source today. Add a Tavily-powered UPC/GTIN lookup that compares title/brand/model/size and writes `product_observations` with `cross_checked` when a second source agrees, `conflicting` when it disagrees. UPCitemdb stays optional (used only if `UPCITEMDB_API_KEY` secret is present; otherwise skipped cleanly).
+3. **Manufacturer verification (Stage 4)** — add a Tavily query for `{brand} {model}` restricted away from marketplace hosts; record MPN / model / specs observations; upgrade fields from `single_source` to `cross_checked` when they match Walmart values.
+4. **Retail comparables (Stage 5)** — add a Tavily query (`"{upc}" OR "{brand} {model}" price -site:walmart.com`) that parses retailer name, URL, and price. Store as `product_data.retail_offers[]` (avoid a new table this pass — noted trade-off below). Reject offers whose title lacks the brand + model / pack.
+5. **Product matching engine** — add `src/lib/matching.ts` with `classifyMatch(candidateFingerprint, referenceFingerprint) → exact | strong | possible | rejected` using pack/size/model/color/condition rules. Used for retail offers and supplier offers; only `exact`/`strong` feed into profit auto-fill.
+6. **Real stage progress** — extend the stages array to the 10 stages in the spec, streamed through the returned scan record; `ScanProgress` reads `product.retrieval.stages`. No fake percentages; each stage is `ok | skipped | error` with a `note`.
+7. **Source & confidence rollup** — expand `SourcesPanel` to show verification status (Verified / Cross-Checked / Single Source / Estimated / User Entered / Conflicting / Unavailable), retrieved-at, and source link, aggregating from `product_observations`. Add helper `src/lib/observations.ts`.
+8. **Market tab honesty** — never invent monthly sales / seller counts. Add "Estimated Monthly Sales Range" (Low–High) only when review count + rating exist, with explicit method + confidence copy; show "Insufficient Data" otherwise. Separate Walmart direct offer vs marketplace vs retail offers vs supplier offers.
+9. **Verdict labels** — align to `Strong Buy Candidate | Promising — Verify Supplier | Borderline | High Risk | Insufficient Data` using existing `evaluate()` output plus product confidence + data completeness thresholds. Rule-based only; no AI override.
+10. **Profit engine v2** — formulas already match; add inline guidance strings, add Conservative/Base/Best scenarios (adjust supplier cost ±10%, referral fee, advertising) inside `ProfitabilityPanel`. Keep "Supplier cost required" gate.
+11. **Error / empty states** — invalid URL, wrong domain, blocked scan, no candidates, expired guest, scan-not-found, provider timeouts each render a friendly card with Retry / Manual entry / Return-to-scanner CTAs instead of blank content.
+12. **Freshness** — add `fetched_at` per section in `product_data` + a "Refresh" button that re-runs the pipeline against the same scan id (updates row + inserts new `product_observations`).
 
-- Extend `identifyInput()` to also accept **product keywords / brand+model** (fallthrough kind = `"query"`), still rejecting empty/URL-with-wrong-host.
-- New server fn `searchWalmartMatches(input)` returns **up to 5 candidates** using SerpApi `walmart` search engine for keywords/UPC, or direct product for URL/itemId. Each candidate: image, title, brand, price, rating, reviews, seller, walmart_item_id, upc, match_confidence + match_reasons.
-- New route/UI: keyword or UPC → show a **candidate picker** (compact cards) on the dashboard/index; user selects → runs the existing analyze pipeline. Direct URL/itemId → skip picker (unchanged behavior).
+## Files touched
 
-### 2. Identifier extraction & product fingerprint
+**New**
+- `src/lib/matching.ts` — fingerprint + classify
+- `src/lib/observations.ts` — reduce observations → verification_status/confidence per field
+- `src/lib/retail.ts` — Tavily retail-offer parser (pure functions; called from server fn)
+- `src/components/ScanProgress.tsx` — real-stage list
+- `src/components/ConfirmProductCard.tsx` — URL/item_id preview before analyze
+- `src/components/RetailOffers.tsx` — comparables list (Market tab)
+- `src/components/ScenarioTable.tsx` — Conservative/Base/Best rows
 
-- In `fetchSerpApiProduct` + Walmart HTML parser, also capture: `model_number`, `manufacturer_part_number`, `sku`, `pack_quantity`, `size`, `color`, `condition`, `variation`, `manufacturer`.
-- Add `product.fingerprint = { brand, model, pack, size, color, condition }` and a `canonical_key` string.
-- Extend `ProductData` type + `ProductEditor` fields.
+**Modified**
+- `src/lib/scan.functions.ts` — add `crossCheckProduct(scanId)`, `refreshScan(scanId)`, extend stages, log retail_offers, run barcode + manufacturer queries via Tavily; write richer observations (`verification_status` from cross-check)
+- `src/lib/walmart.ts` — expose `productFingerprint()` and `canonicalKey()`
+- `src/lib/verdict.ts` — map to new 5 labels using confidence + completeness thresholds
+- `src/components/ResultTabs.tsx` — Market tab surfaces retail offers + monthly-sales range; Verdict tab uses new labels; Overview shows freshness + Refresh; Profit tab renders `ScenarioTable`
+- `src/components/SourcesPanel.tsx` — read from `product_observations` (server fn `listObservations(scanId)`), render 7 statuses, retrieved-at
+- `src/components/ProfitabilityPanel.tsx` — inline guidance, scenarios, keep gate
+- `src/components/VerdictCard.tsx` — new label copy + next-action line
+- `src/routes/_authenticated/dashboard.tsx`, `src/routes/index.tsx` — add ConfirmProductCard for URL/item_id inputs (preview → user clicks Analyze)
+- `src/routes/_authenticated/scans.$id.tsx`, `src/routes/guest-result.tsx` — pass observations + retrieval stages to ResultTabs; render ScanProgress while loading; render friendly error card when scan not found
 
-### 3. Source & confidence system (observations)
+## Database
 
-- New migration adds `product_observations` and `scan_sources` tables (with GRANTs + RLS scoping through `product_scans`). Skip the full multi-table schema in the spec (products, retail_offers, supplier_offers, profit_scenarios, market_metrics) for now — keep existing `product_scans`/`supplier_results` and layer observations on top. This keeps Phase 3 data intact.
-- Every field write during retrieval records a `product_observations` row: `field_name, raw_value, normalized_value, source_name, source_url, verification_status, confidence, retrieved_at`.
-- Compute per-field `verification_status`: `verified | cross_checked | single_source | estimated | user_entered | conflicting | unavailable` by grouping observations.
-- New `SourcesPanel` component surfaces per-field source, retrieval time, status.
+Existing tables (`product_scans`, `product_observations`, `scan_sources`, `supplier_results`, `saved_products`, `calculation_settings`, `profiles`) cover the flow. The spec's full normalization (separate `products`, `retail_offers`, `supplier_offers`, `profit_scenarios`, `market_metrics`) is intentionally deferred to a follow-up pass to avoid regressing Phase 3 surfaces — this pass keeps `product_scans.product_data` + `supplier_results` as the row stores and `product_observations` as per-field source truth. `retail_offers` live in `product_scans.product_data.retail_offers` (JSON array). Called out as an explicit trade-off in the completion report.
 
-### 4. Cross-check stages (barcode + manufacturer + retail offers)
-
-- New server fn `crossCheckProduct(scanId)` runs after initial retrieval:
-  - **Barcode lookup** via Tavily (`"{upc}" product`) — extracts title/brand/model, compares to Walmart values, records observations.
-  - **Manufacturer page** via Tavily (`{brand} {model} site:{brand-domain guess}`) — records specs observations.
-  - **Retail offers** via Tavily (`"{upc}" OR "{model}" price -walmart`) — parses into new lightweight `retail_offers` shape stored in `product_scans.product_data.retail_offers` JSON array (avoids a new table this pass).
-- Reject match when pack/size/model conflict; classify each result as `exact | strong | possible | rejected`.
-
-### 5. Result page tabs
-
-Refactor `ResultView` into 5 tabs sharing the same `scanId`:
-
-- **Overview** — ProductHero, verdict summary chip, product-confidence + data-completeness meters, top-line stats, expandable details.
-- **Suppliers** — existing `SupplierDiscovery` + ranked list; supplier row now has a "Use for Profit" button that also **persists** the selection into `product_scans.product_data.selected_supplier_id`.
-- **Profit** — the existing `ProfitabilityPanel`, plus 3 scenarios (Conservative/Base/Best) using existing `scenarioInputs`, plus per-metric guidance tooltips.
-- **Market** — Demand/Competition/Risk signals (existing helpers) + retail-offer count, price range, availability, review signals, and "Estimated Monthly Sales Range" with explicit method + confidence (not a fake exact number).
-- **Verdict** — Large verdict card + positive signals, risks, missing info, next action.
-
-Tabs are implemented with shadcn `Tabs`; state lives in URL search param `?tab=`.
-
-### 6. Profit engine v2
-
-- Ensure `calc.ts` formulas match the spec exactly (they already do; verify `ROI = profit / invested_cost`, where invested = landed cost only).
-- Add per-field helper text (short plain-language) under each override in `ProfitabilityPanel` drawer.
-- Guard: if `unitCost` missing → show "Supplier cost required to calculate verified profit" and hide numeric profit/ROI/margin (already partly done — extend consistently).
-
-### 7. Loading, errors, caching
-
-- New `ScanProgress` component with **real stage events** streamed via the server fn returning a `stages[]` array of what actually ran (input → identify → walmart → barcode → manufacturer → retail → suppliers → verdict). No fake percentages.
-- Error states for: invalid URL, wrong domain, empty result, blocked, no scan found, expired guest — with retry / manual-entry CTAs on the result page.
-- Cache freshness: add `fetched_at` per section in `product_data`, show "Retrieved X ago" badges; a "Refresh" button re-runs the pipeline.
-
-### 8. Security review
-
-- All new provider calls remain in server functions using `process.env.*`.
-- RLS: new `product_observations` policy scopes via existing `product_scans` ownership (mirrors `supplier_results` policy).
-- Guest scans continue to be gated by `guest_session_id` — unchanged.
-
-## Explicit scope trade-offs (called out honestly)
-
-The spec lists ~10 new normalized tables (products, retail_offers, supplier_offers, profit_scenarios, market_metrics, etc.). Fully normalizing right now would rewrite every existing surface and risk Phase 3 regressions. Instead I will:
-
-- Add only `product_observations` + `scan_sources` as new tables.
-- Keep `product_scans.product_data` + `supplier_results` as the canonical row stores, with the observation table providing per-field source truth.
-- Leave the full split (products / retail_offers / supplier_offers / profit_scenarios / market_metrics) as an optional Phase 4.5 if you want it after this ships. I'll note this in the completion report.
-
-Also deferred: Walmart Marketplace API (no approved creds), UPCitemdb (no key configured) — pipeline will detect and skip gracefully.
-
-## Technical details
-
-**Files to add**
-
-- `src/components/SearchResults.tsx` — candidate picker (5 cards)
-- `src/components/SourcesPanel.tsx` — per-field source table
-- `src/components/ScanProgress.tsx` — real-stage progress
-- `src/components/ResultTabs.tsx` — Tabs wrapper for the 5 tabs
-- `src/lib/observations.ts` — helpers to reduce observations → verification_status/confidence
-- `src/lib/matching.ts` — fingerprint + match classification (exact/strong/possible/rejected)
-
-**Files to modify**
-
-- `src/lib/walmart.ts` — `identifyInput()` accepts `"query"`; extend `ProductData` fields
-- `src/lib/scan.functions.ts` — add `searchWalmartMatches`, `crossCheckProduct`; write observations during retrieval; return stages
-- `src/lib/calc.ts` — no formula change; add guidance strings export
-- `src/lib/verdict.ts` — feed product_match_confidence + data_completeness into rules; add `strong_buy | promising | borderline | high_risk | insufficient` labels mapped from existing verdict output
-- `src/components/ResultView.tsx` — swap body for `ResultTabs`
-- `src/components/VerdictCard.tsx` — new label set + next-action line
-- `src/components/ProfitabilityPanel.tsx` — inline guidance text, 3 scenarios
-- `src/routes/index.tsx`, `src/routes/_authenticated/dashboard.tsx` — call `searchWalmartMatches` first when input is keyword/UPC; render `SearchResults`
-- `src/routes/_authenticated/scans.$id.tsx`, `src/routes/guest-result.tsx` — render `ResultTabs`
-
-**Database migration**
+**Migration this Build** (rollback-safe — additive, `IF NOT EXISTS` where applicable):
 
 ```sql
-CREATE TABLE public.product_observations (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  scan_id uuid NOT NULL REFERENCES public.product_scans(id) ON DELETE CASCADE,
-  field_name text NOT NULL,
-  raw_value text,
-  normalized_value text,
-  source_name text NOT NULL,
-  source_url text,
-  verification_status text NOT NULL,
-  confidence numeric NOT NULL DEFAULT 0,
-  is_selected_value boolean NOT NULL DEFAULT false,
-  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
-  retrieved_at timestamptz NOT NULL DEFAULT now(),
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.product_observations TO authenticated;
-GRANT ALL ON public.product_observations TO service_role;
-ALTER TABLE public.product_observations ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "own observations" ON public.product_observations FOR ALL
-  USING (EXISTS (SELECT 1 FROM public.product_scans s WHERE s.id = scan_id AND s.user_id = auth.uid()))
-  WITH CHECK (EXISTS (SELECT 1 FROM public.product_scans s WHERE s.id = scan_id AND s.user_id = auth.uid()));
+ALTER TABLE public.product_scans
+  ADD COLUMN IF NOT EXISTS input_type text,
+  ADD COLUMN IF NOT EXISTS product_match_confidence numeric,
+  ADD COLUMN IF NOT EXISTS data_completeness_score numeric,
+  ADD COLUMN IF NOT EXISTS error_code text,
+  ADD COLUMN IF NOT EXISTS error_message text,
+  ADD COLUMN IF NOT EXISTS completed_at timestamptz;
 
-CREATE TABLE public.scan_sources (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  scan_id uuid NOT NULL REFERENCES public.product_scans(id) ON DELETE CASCADE,
-  provider_name text NOT NULL,
-  request_type text NOT NULL,
-  request_status text NOT NULL,
-  source_url text,
-  records_returned integer,
-  latency_ms integer,
-  error_message text,
-  requested_at timestamptz NOT NULL DEFAULT now(),
-  completed_at timestamptz,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
--- same GRANTs + RLS via scan ownership
+CREATE INDEX IF NOT EXISTS product_observations_scan_field_idx
+  ON public.product_observations(scan_id, field_name);
 ```
 
-**Providers active**: SerpApi (Walmart product + Walmart search), Tavily (barcode / manufacturer / retail / supplier). Waiting on keys: Walmart Marketplace API, UPCitemdb.
+No RLS changes, no GRANT changes (columns inherit table grants). Safe to apply without data loss.
 
-## Verification before I claim done
+## Data providers
 
-- Run: URL, URL with tracking, itemId, UPC, keyword — confirm picker appears for keyword/UPC, direct load for URL/itemId.
-- Refresh page — same scan id, all tabs load.
-- Missing supplier cost → verdict = Insufficient Data, no fabricated profit.
-- Sources panel shows real provider + retrieved-at for at least title/price/rating.
-- Blocked scan (item 13063753535) — no blank, message shown, retry works.
+| Provider | Status | Used for | Fallback |
+| --- | --- | --- | --- |
+| SerpApi `walmart_product` | Active (`SERPAPI_API_KEY`) | Walmart product retrieval | Tavily |
+| SerpApi `walmart` search | Active | Candidate picker (keyword/UPC) | Warn + suggest URL |
+| Tavily | Active (`TAVILY_API_KEY`) | Barcode / manufacturer / retail / supplier | Skip stage, mark `unavailable` |
+| UPCitemdb | **Not configured** — skipped cleanly | Extra barcode source | Tavily |
+| Walmart Marketplace API | **Not configured** — skipped cleanly | Verified seller count / offers | Show "unknown" |
 
-I'll deliver a completion report at the end covering what shipped, deferred, and remaining limitations.
+Every stage records a `scan_sources` row (`request_status = ok | skipped | error`). No stage failure blanks the page.
+
+## Security
+
+- All provider calls stay in server functions using `process.env.*`. No new secrets are added to the browser bundle.
+- `product_observations` and `scan_sources` RLS is already scan-scoped via `product_scans` ownership.
+- Guest scans remain `guest_session_id` gated; no cross-guest access.
+- `refreshScan` requires `requireSupabaseAuth` (owner-only) for authenticated scans; guest scans use `guest_session_id` verification.
+- No API keys logged. Server logs redact query strings containing `api_key`.
+
+## Anti-fabrication guarantees
+
+- Profit / ROI / margin / break-even hidden when `unitCost` missing → verdict = `Insufficient Data`.
+- Monthly-sales rendered only as a range with confidence; label "Estimated" always visible.
+- Seller count only shown when retrieved; otherwise "Unknown".
+- Retail offer rejected when brand + model can't both be matched in the offer title.
+- Cross-checked only when ≥2 independent sources agree; else `single_source`.
+
+## End-to-end tests (executed in Build)
+
+1. Paste `https://www.walmart.com/ip/774459101` → Confirm card → Analyze → all 5 tabs populated with same scan id → refresh page → same data.
+2. Paste same URL + `?athcpid=xxx` → same normalized item id, tracking stripped.
+3. Paste `774459101` → same result as (1).
+4. Paste UPC `097855155184` → 5 candidates → pick one → analyze → sources panel shows UPC as cross-checked when barcode stage confirms.
+5. Search `logitech g305 wireless mouse` → 5 candidates → pick → analyze.
+6. Enter blocked item id `13063753535` → SerpApi succeeds or Tavily fallback runs → no blank; retrieval banner shown.
+7. Direct visit to `/scans/does-not-exist` → friendly not-found card, not blank.
+8. No supplier cost → verdict = Insufficient Data; profit hidden.
+9. Enter manual supplier cost → recalculates; observation logged as `user_entered`.
+10. Toggle Refresh → new `scan_sources` rows + updated `fetched_at`.
+11. `bunx tsgo` + `bunx vitest run` (if tests exist) + build; browser smoke via Playwright screenshots of Overview / Suppliers / Profit / Market / Verdict on desktop + mobile.
+12. Grep frontend bundle for `SERPAPI_API_KEY`, `TAVILY_API_KEY` → confirm absent.
+
+## Completion report (produced after Build)
+
+Will list: preserved Phase 3 surfaces, new/modified files, migration applied, active vs deferred providers, identifiers extracted (walmart_item_id, upc, ean, gtin, model, mpn, sku, pack, size, color, condition), profit formulas implemented, confidence-status mapping, tests passed / failed, and explicit remaining limitations (deferred normalized schema, UPCitemdb + Walmart Marketplace still awaiting keys).

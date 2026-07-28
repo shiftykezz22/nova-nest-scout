@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ProductData } from "@/lib/walmart";
 import type { Supplier } from "@/lib/suppliers";
 import type { CalcInputs } from "@/lib/calc";
@@ -8,9 +8,16 @@ import { VerdictCard } from "./VerdictCard";
 import { ProfitabilityPanel, buildCalcInputs, type CostOverrides } from "./ProfitabilityPanel";
 import { SupplierDiscovery } from "./SupplierDiscovery";
 import { ProductEditor } from "./ProductEditor";
-import { SourcesPanel } from "./SourcesPanel";
+import { SourcesPanel, type ObservationRow } from "./SourcesPanel";
+import { ScanProgress } from "./ScanProgress";
+import { RetailOffers, type RetailOffer } from "./RetailOffers";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { RefreshCw, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { useServerFn } from "@tanstack/react-start";
+import { listObservations, refreshScan } from "@/lib/scan.functions";
 import { calculate } from "@/lib/calc";
 import { evaluate } from "@/lib/verdict";
 
@@ -35,6 +42,26 @@ export function ResultTabs({ product, onProductChange, scanId, initialSuppliers,
     supplierUnitCost: initialSuppliers?.[0]?.unit_cost ?? product.unit_cost ?? undefined,
     quantity: product.order_quantity ?? 20,
   });
+  const [observations, setObservations] = useState<ObservationRow[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const loadObs = useServerFn(listObservations);
+  const doRefresh = useServerFn(refreshScan);
+  useEffect(() => {
+    if (!scanId) return;
+    loadObs({ data: { scanId } }).then((r) => setObservations(r.rows as ObservationRow[])).catch(() => setObservations([]));
+  }, [scanId, loadObs, product.scanned_at]);
+
+  async function onRefresh() {
+    if (!scanId || refreshing) return;
+    setRefreshing(true);
+    try {
+      const r = await doRefresh({ data: { scanId } });
+      onProductChange(r.product as Partial<ProductData>);
+      toast.success("Scan refreshed");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Refresh failed");
+    } finally { setRefreshing(false); }
+  }
 
   const base = useMemo(() => ({
     shippingPerUnit: settings?.shippingPerUnit ?? DEFAULTS.shippingPerUnit,
@@ -56,6 +83,8 @@ export function ResultTabs({ product, onProductChange, scanId, initialSuppliers,
     [product, calc, selected],
   );
   const retrieval = product.retrieval;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const retailOffers = ((product as any).retail_offers ?? []) as RetailOffer[];
   const demand = useMemo(() => signalDemand(product), [product]);
   const competition = useMemo(() => signalCompetition(product), [product]);
   const risk = useMemo(() => signalRisk(verdict.risks.length, retrieval?.walmart_status), [verdict.risks.length, retrieval?.walmart_status]);
@@ -72,10 +101,17 @@ export function ResultTabs({ product, onProductChange, scanId, initialSuppliers,
     <div className="space-y-4">
       <ProductHero product={product} />
       {retrieval && (retrieval.walmart_status !== "ok" || retrieval.fields_missing.length > 0) && (
-        <div className="rounded-2xl border bg-card p-3 text-xs">
-          <span className="font-semibold">Retrieval:</span>{" "}
-          {retrieval.walmart_status === "ok" ? "Product found." : retrieval.walmart_status === "blocked" ? "Walmart blocked the direct request; SerpApi / Tavily fallback used." : retrieval.walmart_status === "empty" ? "No product data returned." : "Retrieval failed."}
-          <span className="text-muted-foreground"> · Provider: {retrieval.provider ?? "walmart_html"} · {retrieval.fields_missing.length} field{retrieval.fields_missing.length === 1 ? "" : "s"} missing.</span>
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border bg-card p-3 text-xs">
+          <div>
+            <span className="font-semibold">Retrieval:</span>{" "}
+            {retrieval.walmart_status === "ok" ? "Product found." : retrieval.walmart_status === "blocked" ? "Walmart blocked the direct request; SerpApi / Tavily fallback used." : retrieval.walmart_status === "empty" ? "No product data returned." : "Retrieval failed."}
+            <span className="text-muted-foreground"> · Provider: {retrieval.provider ?? "walmart_html"} · {retrieval.fields_missing.length} field{retrieval.fields_missing.length === 1 ? "" : "s"} missing.</span>
+          </div>
+          {scanId && (
+            <Button size="sm" variant="outline" onClick={onRefresh} disabled={refreshing} className="h-7 gap-1 text-xs">
+              {refreshing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} Refresh
+            </Button>
+          )}
         </div>
       )}
 
@@ -94,7 +130,8 @@ export function ResultTabs({ product, onProductChange, scanId, initialSuppliers,
             <MeterCard label="Data completeness" value={completeness} />
             <MeterCard label="Opportunity score" value={verdict.verdict === "INSUFFICIENT_DATA" ? null : verdict.opportunityScore} />
           </div>
-          <SourcesPanel product={product} />
+          <SourcesPanel product={product} observations={observations} />
+          <ScanProgress product={product} />
           <Accordion type="single" collapsible className="rounded-2xl border bg-card">
             <AccordionItem value="details" className="border-none">
               <AccordionTrigger className="px-4 md:px-6 py-4 text-base font-semibold hover:no-underline">View & edit full product details</AccordionTrigger>
@@ -137,6 +174,7 @@ export function ResultTabs({ product, onProductChange, scanId, initialSuppliers,
             <Signal label="Competition" tone={competition.tone} value={competition.value} known={competition.known} note={competition.note} />
             <Signal label="Risk" tone={risk.tone} value={risk.value} known={risk.known} note={risk.note} />
           </div>
+          <RetailOffers offers={retailOffers} />
           <div className="rounded-2xl border bg-card p-4 md:p-6">
             <div className="text-sm font-semibold">Market observations</div>
             <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
