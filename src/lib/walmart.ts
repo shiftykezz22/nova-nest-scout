@@ -92,5 +92,6 @@ export type ProductData = {
     tavily_used: boolean;
     fields_recovered: number;
     fields_missing: string[];
+    provider?: string;
   };
 };
