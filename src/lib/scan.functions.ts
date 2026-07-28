@@ -13,6 +13,7 @@ type Retrieval = {
   fields_recovered: number;
   fields_missing: string[];
   provider?: string;
+  stages?: Array<{ name: string; status: "ok" | "skipped" | "error"; note?: string }>;
 };
 
 const ANTIBOT_RX = /robot or human\?|are you a human|verify you are human|unusual traffic|access denied|captcha|px-captcha|perimeterx|please enable javascript and cookies|blocked by/i;
@@ -531,7 +532,8 @@ export const analyzeProduct = createServerFn({ method: "POST" })
       await context.supabase.from("scan_sources").insert(scanSources);
     }
     // Log observations for each core field with a source, so the Sources panel has data.
-    const obs: Array<Record<string, unknown>> = [];
+    type ObsRow = { scan_id: string; field_name: string; raw_value: string; normalized_value: string; source_name: string; source_url: string | null; verification_status: string; confidence: number; is_selected_value: boolean };
+    const obs: ObsRow[] = [];
     for (const [k, src] of Object.entries(product.sources ?? {})) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const v = (product as any)[k];
