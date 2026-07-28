@@ -194,6 +194,9 @@ function toSupplier(r: TavilyResult, hint: { kind: string; bucket?: Supplier["re
     moq,
     verification_status: priceInSnippet ? "partially_verified" : "quote_required",
     source: `tavily:${hint.kind}`,
+    origin: "live_search",
+    channel: region_bucket === "international" ? "overseas" : (region_bucket && !["us", "international"].includes(region_bucket)) ? "local" : "wholesale",
+    query: hint.kind,
     contact_data: {
       snippet: r.content?.slice(0, 240),
       last_checked: new Date().toISOString(),
