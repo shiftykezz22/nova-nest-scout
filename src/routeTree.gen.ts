@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as TermsRouteImport } from './routes/terms'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as GuestResultRouteImport } from './routes/guest-result'
 import { Route as GlossaryRouteImport } from './routes/glossary'
@@ -19,6 +20,11 @@ import { Route as AuthenticatedScansRouteImport } from './routes/_authenticated/
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedScansIdRouteImport } from './routes/_authenticated/scans.$id'
 
+const TermsRoute = TermsRouteImport.update({
+  id: '/terms',
+  path: '/terms',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PrivacyRoute = PrivacyRouteImport.update({
   id: '/privacy',
   path: '/privacy',
@@ -70,6 +76,7 @@ export interface FileRoutesByFullPath {
   '/glossary': typeof GlossaryRoute
   '/guest-result': typeof GuestResultRoute
   '/privacy': typeof PrivacyRoute
+  '/terms': typeof TermsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/scans': typeof AuthenticatedScansRouteWithChildren
   '/scans/$id': typeof AuthenticatedScansIdRoute
@@ -80,6 +87,7 @@ export interface FileRoutesByTo {
   '/glossary': typeof GlossaryRoute
   '/guest-result': typeof GuestResultRoute
   '/privacy': typeof PrivacyRoute
+  '/terms': typeof TermsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/scans': typeof AuthenticatedScansRouteWithChildren
   '/scans/$id': typeof AuthenticatedScansIdRoute
@@ -92,6 +100,7 @@ export interface FileRoutesById {
   '/glossary': typeof GlossaryRoute
   '/guest-result': typeof GuestResultRoute
   '/privacy': typeof PrivacyRoute
+  '/terms': typeof TermsRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/scans': typeof AuthenticatedScansRouteWithChildren
   '/_authenticated/scans/$id': typeof AuthenticatedScansIdRoute
@@ -104,6 +113,7 @@ export interface FileRouteTypes {
     | '/glossary'
     | '/guest-result'
     | '/privacy'
+    | '/terms'
     | '/dashboard'
     | '/scans'
     | '/scans/$id'
@@ -114,6 +124,7 @@ export interface FileRouteTypes {
     | '/glossary'
     | '/guest-result'
     | '/privacy'
+    | '/terms'
     | '/dashboard'
     | '/scans'
     | '/scans/$id'
@@ -125,6 +136,7 @@ export interface FileRouteTypes {
     | '/glossary'
     | '/guest-result'
     | '/privacy'
+    | '/terms'
     | '/_authenticated/dashboard'
     | '/_authenticated/scans'
     | '/_authenticated/scans/$id'
@@ -137,10 +149,18 @@ export interface RootRouteChildren {
   GlossaryRoute: typeof GlossaryRoute
   GuestResultRoute: typeof GuestResultRoute
   PrivacyRoute: typeof PrivacyRoute
+  TermsRoute: typeof TermsRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/terms': {
+      id: '/terms'
+      path: '/terms'
+      fullPath: '/terms'
+      preLoaderRoute: typeof TermsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/privacy': {
       id: '/privacy'
       path: '/privacy'
@@ -238,6 +258,7 @@ const rootRouteChildren: RootRouteChildren = {
   GlossaryRoute: GlossaryRoute,
   GuestResultRoute: GuestResultRoute,
   PrivacyRoute: PrivacyRoute,
+  TermsRoute: TermsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
