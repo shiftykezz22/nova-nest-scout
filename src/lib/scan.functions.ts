@@ -111,10 +111,32 @@ async function fetchSerpApiProduct(itemId: string): Promise<{ product: Partial<P
     const model = p.model || p.model_number;
     if (model) { out.model = String(model); out.sources!.model = "verified"; }
 
-    // Price: SerpApi walmart_product returns price fields in a few shapes
-    const price = pickNum(
-      p.price?.price ?? p.price?.current_price ?? p.current_price ?? p.primary_offer?.offer_price ?? (typeof p.price === "number" || typeof p.price === "string" ? p.price : undefined),
-    );
+    // Price: SerpApi walmart_product exposes price under several shapes
+    const priceCandidates: unknown[] = [
+      typeof p.price === "number" || typeof p.price === "string" ? p.price : undefined,
+      p.price?.price,
+      p.price?.current_price,
+      p.current_price,
+      p.primary_offer?.offer_price,
+      p.buybox_offer?.price,
+      p.buybox?.price,
+      p.price_map?.price,
+      p.pricing?.current_price,
+      p.offers?.[0]?.price,
+    ];
+    let price: number | undefined;
+    for (const c of priceCandidates) {
+      const n = pickNum(c);
+      if (n && n > 0) { price = n; break; }
+    }
+    if (!price && data?.product_result) {
+      // last-ditch: scan any numeric-looking "price" leaf
+      try {
+        const s = JSON.stringify(data.product_result);
+        const m = s.match(/"(?:price|current_price|offer_price)"\s*:\s*"?\$?(\d{1,5}(?:\.\d{1,2})?)"?/);
+        if (m) { const n = parseFloat(m[1]); if (n > 0) price = n; }
+      } catch { /* ignore */ }
+    }
     if (price && price > 0) { out.price = price; out.sources!.price = "verified"; }
 
     const prev = pickNum(p.price?.was_price ?? p.was_price ?? p.original_price ?? p.list_price);
@@ -161,7 +183,7 @@ async function fetchSerpApiProduct(itemId: string): Promise<{ product: Partial<P
     else if (p.in_stock === true || p.availability === "InStock") stock = "InStock";
     if (stock) { out.stock_status = stock; out.sources!.stock_status = "verified"; }
 
-    const ok = !!out.title && !!out.price;
+    const ok = !!out.title;
     console.log("[serpapi] extracted", { title: !!out.title, price: !!out.price, rating: !!out.rating, reviews: !!out.review_count, image: !!out.image });
     return { product: out, ok, reason: ok ? undefined : "serpapi_incomplete" };
   } catch (e) {
