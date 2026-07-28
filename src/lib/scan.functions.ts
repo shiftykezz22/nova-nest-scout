@@ -105,11 +105,24 @@ async function fetchSerpApiProduct(itemId: string): Promise<{ product: Partial<P
     const brand = p.brand || p.manufacturer;
     if (brand) { out.brand = String(brand); out.sources!.brand = "verified"; }
 
-    const upc = p.upc || p.gtin || p.gtin13 || p.upc_a;
+    if (p.manufacturer) { out.manufacturer = String(p.manufacturer); out.sources!.manufacturer = "verified"; }
+
+    const upc = p.upc || p.gtin13 || p.upc_a;
     if (upc) { out.upc_gtin = String(upc); out.sources!.upc_gtin = "verified"; }
+    if (p.gtin || p.gtin14) { out.gtin = String(p.gtin || p.gtin14); out.sources!.gtin = "verified"; }
+    if (p.ean || p.ean13) { out.ean = String(p.ean || p.ean13); out.sources!.ean = "verified"; }
 
     const model = p.model || p.model_number;
     if (model) { out.model = String(model); out.sources!.model = "verified"; }
+    const mpn = p.manufacturer_part_number || p.mpn || p.part_number;
+    if (mpn) { out.manufacturer_part_number = String(mpn); out.sources!.manufacturer_part_number = "verified"; }
+    if (p.sku) { out.sku = String(p.sku); out.sources!.sku = "verified"; }
+    if (p.color) { out.color = String(p.color); out.sources!.color = "verified"; }
+    if (p.size) { out.size = String(p.size); out.sources!.size = "verified"; }
+    const pack = p.pack_size || p.pack_quantity || p.count_per_pack;
+    if (pack) { out.pack_quantity = String(pack); out.sources!.pack_quantity = "verified"; }
+    if (p.condition) { out.condition = String(p.condition); out.sources!.condition = "verified"; }
+    if (p.variation || p.variant_name) { out.variation = String(p.variation || p.variant_name); out.sources!.variation = "verified"; }
 
     // Price: SerpApi walmart_product exposes price under several shapes
     const priceCandidates: unknown[] = [
