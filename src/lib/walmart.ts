@@ -22,15 +22,16 @@ export function normalizeWalmartUrl(raw: string): { ok: boolean; url?: string; i
   return { ok: true, url: u.toString(), itemId };
 }
 
-export type InputKind = "url" | "upc" | "item_id";
+export type InputKind = "url" | "upc" | "item_id" | "query";
 export type IdentifiedInput =
   | { ok: true; kind: "url"; url: string; itemId?: string }
   | { ok: true; kind: "item_id"; url: string; itemId: string }
   | { ok: true; kind: "upc"; upc: string }
+  | { ok: true; kind: "query"; query: string }
   | { ok: false; error: string };
 
-// Detects whether raw input is a Walmart URL, a Walmart item ID (5-12 digits),
-// or a UPC / GTIN (12-14 digits). Whitespace / hyphens in numeric input are ignored.
+// Detects whether raw input is a Walmart URL, a Walmart item ID (5-11 digits),
+// a UPC / GTIN (12-14 digits), or a free-text keyword / brand+model query.
 export function identifyInput(raw: string): IdentifiedInput {
   const s = (raw ?? "").trim();
   if (!s) return { ok: false, error: "Enter a Walmart URL, UPC / GTIN, or item ID." };
@@ -41,12 +42,16 @@ export function identifyInput(raw: string): IdentifiedInput {
     return { ok: true, kind: "url", url: n.url, itemId: n.itemId };
   }
   const digits = s.replace(/[\s-]/g, "");
-  if (!/^\d+$/.test(digits)) return { ok: false, error: "Paste a Walmart URL, or a numeric UPC / item ID." };
-  if (digits.length >= 12 && digits.length <= 14) return { ok: true, kind: "upc", upc: digits };
-  if (digits.length >= 5 && digits.length <= 11) {
-    return { ok: true, kind: "item_id", url: `https://www.walmart.com/ip/${digits}`, itemId: digits };
+  if (/^\d+$/.test(digits)) {
+    if (digits.length >= 12 && digits.length <= 14) return { ok: true, kind: "upc", upc: digits };
+    if (digits.length >= 5 && digits.length <= 11) {
+      return { ok: true, kind: "item_id", url: `https://www.walmart.com/ip/${digits}`, itemId: digits };
+    }
+    return { ok: false, error: "Number must be a 5-11 digit Walmart item ID or 12-14 digit UPC / GTIN." };
   }
-  return { ok: false, error: "Number must be a 5-11 digit Walmart item ID or 12-14 digit UPC / GTIN." };
+  // Free-text keyword / brand + model
+  if (s.length < 2) return { ok: false, error: "Enter at least 2 characters to search." };
+  return { ok: true, kind: "query", query: s };
 }
 
 export type FieldSource = "verified" | "public" | "user" | "estimated" | "unavailable";
@@ -54,8 +59,13 @@ export type FieldSource = "verified" | "public" | "user" | "estimated" | "unavai
 export type ProductData = {
   title?: string;
   brand?: string;
+  manufacturer?: string;
   walmart_item_id?: string;
   upc_gtin?: string;
+  ean?: string;
+  gtin?: string;
+  sku?: string;
+  manufacturer_part_number?: string;
   model?: string;
   image?: string;
   price?: number;
@@ -66,6 +76,10 @@ export type ProductData = {
   review_count?: number;
   category?: string;
   size?: string;
+  color?: string;
+  pack_quantity?: string;
+  condition?: string;
+  variation?: string;
   shipping_weight?: string;
   dimensions?: string;
   variants?: string;
@@ -84,6 +98,8 @@ export type ProductData = {
   supplier_info?: string;
   // per-field source map
   sources?: Partial<Record<string, FieldSource>>;
+  // provider provenance per field (which source produced the value)
+  source_names?: Partial<Record<string, string>>;
   // retrieval diagnostics (set by scan pipeline)
   retrieval?: {
     walmart_status: "ok" | "blocked" | "empty" | "network_error";
@@ -93,5 +109,25 @@ export type ProductData = {
     fields_recovered: number;
     fields_missing: string[];
     provider?: string;
+    stages?: Array<{ name: string; status: "ok" | "skipped" | "error"; note?: string }>;
   };
+  // pipeline metadata
+  scanned_at?: string;
 };
+
+// Fields we surface in the sources panel.
+export const CORE_FIELDS: Array<{ key: keyof ProductData; label: string }> = [
+  { key: "title", label: "Title" },
+  { key: "price", label: "Price" },
+  { key: "brand", label: "Brand" },
+  { key: "model", label: "Model" },
+  { key: "manufacturer_part_number", label: "Manufacturer part #" },
+  { key: "upc_gtin", label: "UPC / GTIN" },
+  { key: "walmart_item_id", label: "Walmart item ID" },
+  { key: "rating", label: "Rating" },
+  { key: "review_count", label: "Reviews" },
+  { key: "seller", label: "Seller" },
+  { key: "category", label: "Category" },
+  { key: "stock_status", label: "Stock" },
+  { key: "image", label: "Image" },
+];
