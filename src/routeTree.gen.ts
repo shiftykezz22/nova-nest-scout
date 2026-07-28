@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as GuestResultRouteImport } from './routes/guest-result'
+import { Route as GlossaryRouteImport } from './routes/glossary'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
@@ -20,6 +21,11 @@ import { Route as AuthenticatedScansIdRouteImport } from './routes/_authenticate
 const GuestResultRoute = GuestResultRouteImport.update({
   id: '/guest-result',
   path: '/guest-result',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GlossaryRoute = GlossaryRouteImport.update({
+  id: '/glossary',
+  path: '/glossary',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthRoute = AuthRouteImport.update({
@@ -55,6 +61,7 @@ const AuthenticatedScansIdRoute = AuthenticatedScansIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/glossary': typeof GlossaryRoute
   '/guest-result': typeof GuestResultRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/scans': typeof AuthenticatedScansRouteWithChildren
@@ -63,6 +70,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/glossary': typeof GlossaryRoute
   '/guest-result': typeof GuestResultRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/scans': typeof AuthenticatedScansRouteWithChildren
@@ -73,6 +81,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/glossary': typeof GlossaryRoute
   '/guest-result': typeof GuestResultRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/scans': typeof AuthenticatedScansRouteWithChildren
@@ -83,17 +92,26 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth'
+    | '/glossary'
     | '/guest-result'
     | '/dashboard'
     | '/scans'
     | '/scans/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/guest-result' | '/dashboard' | '/scans' | '/scans/$id'
+  to:
+    | '/'
+    | '/auth'
+    | '/glossary'
+    | '/guest-result'
+    | '/dashboard'
+    | '/scans'
+    | '/scans/$id'
   id:
     | '__root__'
     | '/'
     | '/_authenticated'
     | '/auth'
+    | '/glossary'
     | '/guest-result'
     | '/_authenticated/dashboard'
     | '/_authenticated/scans'
@@ -104,6 +122,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  GlossaryRoute: typeof GlossaryRoute
   GuestResultRoute: typeof GuestResultRoute
 }
 
@@ -114,6 +133,13 @@ declare module '@tanstack/react-router' {
       path: '/guest-result'
       fullPath: '/guest-result'
       preLoaderRoute: typeof GuestResultRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/glossary': {
+      id: '/glossary'
+      path: '/glossary'
+      fullPath: '/glossary'
+      preLoaderRoute: typeof GlossaryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth': {
@@ -189,6 +215,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  GlossaryRoute: GlossaryRoute,
   GuestResultRoute: GuestResultRoute,
 }
 export const routeTree = rootRouteImport
