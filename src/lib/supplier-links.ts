@@ -46,7 +46,7 @@ export function generateSupplierLinks(product: ProductData, opts?: { location?: 
   const title = shortTitle(product);
   const model = product.model?.trim();
   const upc = product.upc_gtin?.trim();
-  const pack = product.pack_count ? `${product.pack_count}-pack` : product.size?.trim();
+  const pack = product.size?.trim();
   const cat = product.category?.split(/[/>]/).pop()?.trim();
   const generic = cat || title || brand || "";
   const brandProduct = [brand, title].filter(Boolean).join(" ").trim();
