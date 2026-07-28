@@ -91,7 +91,11 @@ export function ResultTabs({ product, onProductChange, scanId, initialSuppliers,
 
   function handleUseCost(s: Supplier, unitCost: number) {
     setSelected(s);
-    setOverrides((prev) => ({ ...prev, supplierUnitCost: unitCost }));
+    setOverrides((prev) => {
+      const qty = Math.max(1, Math.floor(prev.quantity ?? s.moq ?? 20));
+      const totalShip = typeof s.estimated_shipping === "number" ? s.estimated_shipping : prev.totalSupplierShipping;
+      return { ...prev, supplierUnitCost: unitCost, quantity: qty, totalSupplierShipping: totalShip };
+    });
   }
 
   const fieldsFilled = [product.title, product.price, product.brand, product.image, product.rating, product.review_count, product.upc_gtin, product.model].filter(Boolean).length;
