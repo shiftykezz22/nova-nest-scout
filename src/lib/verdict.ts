@@ -64,9 +64,14 @@ export function evaluate(product: ProductData, calc: CalcResult, hasSupplier: bo
   const confidence = Math.round((filled / fields.length) * 100);
 
   const reasons: string[] = [];
-  reasons.push(`Estimated profit is $${calc.estimatedProfit.toFixed(2)} per unit.`);
-  reasons.push(`ROI is ${calc.roi.toFixed(0)}%.`);
-  reasons.push(`Profit margin is ${calc.profitMargin.toFixed(0)}%.`);
+  const canCalc = (product.price ?? 0) > 0 && calc.landedCost > 0;
+  if (canCalc) {
+    reasons.push(`Estimated profit is $${calc.estimatedProfit.toFixed(2)} per unit.`);
+    reasons.push(`ROI is ${calc.roi.toFixed(0)}%.`);
+    reasons.push(`Profit margin is ${calc.profitMargin.toFixed(0)}%.`);
+  } else {
+    reasons.push("Profit, ROI, and margin cannot be calculated without both selling price and unit cost.");
+  }
 
   const criticalRisk = risks.some((r) => /hazardous/i.test(r));
   let verdict: Verdict;
@@ -74,6 +79,9 @@ export function evaluate(product: ProductData, calc: CalcResult, hasSupplier: bo
   if (missing.length >= 3 || confidence < 40) {
     verdict = "INSUFFICIENT_DATA";
     nextAction = "Fill in the missing fields below to get a recommendation.";
+  } else if (!canCalc) {
+    verdict = "INSUFFICIENT_DATA";
+    nextAction = "Enter a selling price and unit cost to calculate profit.";
   } else if (calc.estimatedProfit < 0 || calc.roi < 10 || calc.profitMargin < 5 || criticalRisk || risks.length >= 4) {
     verdict = "SKIP";
     nextAction = "This product does not meet minimum profit or risk requirements.";

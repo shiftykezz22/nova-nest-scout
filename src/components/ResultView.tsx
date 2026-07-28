@@ -65,7 +65,10 @@ export function ResultView({ product, onProductChange, scanId, initialSuppliers,
   }), [product, selected, settings, qty]);
 
   const calc = useMemo(() => calculate(inputs), [inputs]);
+  const effectiveCost = selected?.unit_cost ?? product.unit_cost ?? 0;
+  const canCalc = (product.price ?? 0) > 0 && effectiveCost > 0;
   const verdict = useMemo(() => evaluate(product, calc, !!selected && (selected.product_match !== "weak" || (product.sources?.unit_cost === "user"))), [product, calc, selected]);
+  const retrieval = product.retrieval;
 
   async function runSearch() {
     if (!product.title && !product.brand && !product.upc_gtin) {
@@ -120,12 +123,31 @@ export function ResultView({ product, onProductChange, scanId, initialSuppliers,
 
   return (
     <div className="space-y-6">
+      {retrieval && (retrieval.walmart_status !== "ok" || retrieval.fields_missing.length > 0) && (
+        <div className="rounded-2xl border bg-card p-4 text-sm">
+          <div className="font-semibold">
+            {retrieval.walmart_status === "blocked"
+              ? "Walmart blocked the direct request."
+              : retrieval.walmart_status === "empty"
+                ? "Walmart returned no product data."
+                : retrieval.walmart_status === "network_error"
+                  ? "Walmart request failed."
+                  : "Some fields could not be retrieved."}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            Sources checked: {retrieval.sources_tried.join(", ") || "walmart"}.
+            {retrieval.tavily_used && ` Public search fallback recovered ${retrieval.fields_recovered} field${retrieval.fields_recovered === 1 ? "" : "s"}.`}
+            {retrieval.fields_missing.length > 0 && ` Still unavailable: ${retrieval.fields_missing.join(", ")}.`}
+          </div>
+        </div>
+      )}
       <VerdictCard
         v={verdict}
         calc={calc}
         walmartPrice={product.price}
         bestSupplierName={selected?.supplier_name}
         quantity={qty}
+        canCalc={canCalc}
       />
 
       <section className="rounded-2xl border bg-card p-4 md:p-6">

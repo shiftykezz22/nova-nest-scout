@@ -11,17 +11,20 @@ const V = {
   INSUFFICIENT_DATA: { label: "INSUFFICIENT DATA", color: "bg-muted text-foreground", Icon: HelpCircle },
 } as const;
 
-export function VerdictCard({ v, calc, walmartPrice, bestSupplierName, quantity }: {
+export function VerdictCard({ v, calc, walmartPrice, bestSupplierName, quantity, canCalc }: {
   v: VerdictResult;
   calc: CalcResult;
   walmartPrice?: number;
   bestSupplierName?: string;
   quantity?: number;
+  canCalc?: boolean;
 }) {
   const style = V[v.verdict];
   const Icon = style.Icon;
   const confLabel = v.confidence >= 70 ? "High" : v.confidence >= 40 ? "Medium" : "Low";
   const recTest = Math.max(5, Math.min(50, Math.round((walmartPrice ? 250 / walmartPrice : 20))));
+  const na = "—";
+  const showCalc = canCalc !== false;
   return (
     <div className="rounded-2xl border bg-card p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -42,14 +45,19 @@ export function VerdictCard({ v, calc, walmartPrice, bestSupplierName, quantity 
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-4">
         <Stat label="Walmart price" value={walmartPrice ? usd(walmartPrice) : "—"} />
-        <Stat label="Landed cost" value={usd(calc.landedCost)} />
-        <Stat label="Profit / unit" value={usd(calc.estimatedProfit)} tone={calc.estimatedProfit >= 0 ? "good" : "bad"} />
-        <Stat label="Margin" value={`${calc.profitMargin.toFixed(1)}%`} tone={calc.profitMargin >= 15 ? "good" : calc.profitMargin >= 5 ? "warn" : "bad"} />
-        <Stat label="ROI" value={`${calc.roi.toFixed(0)}%`} tone={calc.roi >= 30 ? "good" : calc.roi >= 10 ? "warn" : "bad"} />
-        <Stat label="Break-even" value={usd(calc.breakEvenPrice)} />
+        <Stat label="Landed cost" value={showCalc ? usd(calc.landedCost) : na} />
+        <Stat label="Profit / unit" value={showCalc ? usd(calc.estimatedProfit) : na} tone={showCalc ? (calc.estimatedProfit >= 0 ? "good" : "bad") : undefined} />
+        <Stat label="Margin" value={showCalc ? `${calc.profitMargin.toFixed(1)}%` : na} tone={showCalc ? (calc.profitMargin >= 15 ? "good" : calc.profitMargin >= 5 ? "warn" : "bad") : undefined} />
+        <Stat label="ROI" value={showCalc ? `${calc.roi.toFixed(0)}%` : na} tone={showCalc ? (calc.roi >= 30 ? "good" : calc.roi >= 10 ? "warn" : "bad") : undefined} />
+        <Stat label="Break-even" value={showCalc ? usd(calc.breakEvenPrice) : na} />
         <Stat label="Recommended test qty" value={String(quantity ?? recTest)} />
-        <Stat label="Required cash" value={usd(calc.requiredCash || (calc.landedCost * (quantity ?? recTest)))} />
+        <Stat label="Required cash" value={showCalc ? usd(calc.requiredCash || (calc.landedCost * (quantity ?? recTest))) : na} />
       </div>
+      {!showCalc && (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          Cannot calculate — missing required inputs (selling price and unit cost). Enter them manually below to see profit, margin, ROI and break-even.
+        </div>
+      )}
 
       <div className="mt-4 grid gap-4 md:grid-cols-2">
         <div>

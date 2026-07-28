@@ -84,4 +84,13 @@ export type ProductData = {
   supplier_info?: string;
   // per-field source map
   sources?: Partial<Record<string, FieldSource>>;
+  // retrieval diagnostics (set by scan pipeline)
+  retrieval?: {
+    walmart_status: "ok" | "blocked" | "empty" | "network_error";
+    walmart_reason?: string;
+    sources_tried: string[];
+    tavily_used: boolean;
+    fields_recovered: number;
+    fields_missing: string[];
+  };
 };
