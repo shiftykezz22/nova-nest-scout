@@ -1,14 +1,33 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { ProductData } from "./walmart";
-import { normalizeWalmartUrl } from "./walmart";
+import { normalizeWalmartUrl, identifyInput } from "./walmart";
+
+const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+async function resolveUpcToWalmartUrl(upc: string): Promise<{ url?: string; itemId?: string }> {
+  try {
+    const res = await fetch(`https://www.walmart.com/search?q=${encodeURIComponent(upc)}`, {
+      headers: { "user-agent": UA, accept: "text/html", "accept-language": "en-US,en;q=0.9" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return {};
+    const html = await res.text();
+    const m = html.match(/\/ip\/(?:[^/"?#\s]+\/)?(\d{5,})/);
+    if (!m) return {};
+    const url = `https://www.walmart.com/ip/${m[1]}`;
+    return { url, itemId: m[1] };
+  } catch {
+    return {};
+  }
+}
 
 async function fetchWalmartProduct(url: string): Promise<Partial<ProductData>> {
   const out: Partial<ProductData> = { product_url: url, data_source: "walmart.com", last_updated: new Date().toISOString(), sources: {} };
   try {
     const res = await fetch(url, {
       headers: {
-        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "user-agent": UA,
         accept: "text/html,application/xhtml+xml",
         "accept-language": "en-US,en;q=0.9",
       },
@@ -47,23 +66,71 @@ async function fetchWalmartProduct(url: string): Promise<Partial<ProductData>> {
   return out;
 }
 
+// Resolves a raw user input (URL, UPC/GTIN, or item ID) into a normalized
+// Walmart URL + product data. Returns product-only fields; never throws for
+// missing product data — only for invalid input.
+async function resolveAndFetch(rawInput: string): Promise<{
+  normalizedUrl: string; itemId?: string; upc?: string; product: Partial<ProductData>;
+}> {
+  const id = identifyInput(rawInput);
+  if (!id.ok) throw new Error(id.error);
+
+  let normalizedUrl: string;
+  let itemId: string | undefined;
+  let upc: string | undefined;
+
+  if (id.kind === "url") {
+    normalizedUrl = id.url;
+    itemId = id.itemId;
+  } else if (id.kind === "item_id") {
+    normalizedUrl = id.url;
+    itemId = id.itemId;
+  } else {
+    upc = id.upc;
+    const resolved = await resolveUpcToWalmartUrl(id.upc);
+    if (!resolved.url) {
+      return {
+        normalizedUrl: `https://www.walmart.com/search?q=${encodeURIComponent(id.upc)}`,
+        upc,
+        product: {
+          upc_gtin: id.upc,
+          data_source: "walmart.com",
+          last_updated: new Date().toISOString(),
+          sources: { upc_gtin: "user" },
+        },
+      };
+    }
+    normalizedUrl = resolved.url;
+    itemId = resolved.itemId;
+  }
+
+  const product = await fetchWalmartProduct(normalizedUrl);
+  if (itemId) {
+    product.walmart_item_id = itemId;
+    product.sources = { ...(product.sources || {}), walmart_item_id: "verified" };
+  }
+  if (upc && !product.upc_gtin) {
+    product.upc_gtin = upc;
+    product.sources = { ...(product.sources || {}), upc_gtin: "user" };
+  }
+  return { normalizedUrl, itemId, upc, product };
+}
+
 export const analyzeProduct = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((data: { url: string }) => data)
+  .inputValidator((data: { input?: string; url?: string }) => data)
   .handler(async ({ data, context }) => {
-    const norm = normalizeWalmartUrl(data.url);
-    if (!norm.ok || !norm.url) throw new Error(norm.error || "Invalid URL");
-    const product = await fetchWalmartProduct(norm.url);
-    product.walmart_item_id = norm.itemId;
-    if (norm.itemId) product.sources = { ...(product.sources || {}), walmart_item_id: "verified" };
+    const raw = (data.input ?? data.url ?? "").trim();
+    if (!raw) throw new Error("Enter a Walmart URL, UPC / GTIN, or item ID.");
+    const { normalizedUrl, itemId, product } = await resolveAndFetch(raw);
     const status = product.title ? "retrieved" : "manual_required";
     const { data: row, error } = await context.supabase
       .from("product_scans")
       .insert({
         user_id: context.userId,
-        input_url: data.url,
-        normalized_url: norm.url,
-        walmart_item_id: norm.itemId || null,
+        input_url: raw,
+        normalized_url: normalizedUrl,
+        walmart_item_id: itemId || null,
         title: product.title || null,
         brand: product.brand || null,
         upc_gtin: product.upc_gtin || null,
@@ -77,12 +144,10 @@ export const analyzeProduct = createServerFn({ method: "POST" })
   });
 
 export const analyzeProductGuest = createServerFn({ method: "POST" })
-  .inputValidator((data: { url: string }) => data)
+  .inputValidator((data: { input?: string; url?: string }) => data)
   .handler(async ({ data }) => {
-    const norm = normalizeWalmartUrl(data.url);
-    if (!norm.ok || !norm.url) throw new Error(norm.error || "Invalid URL");
-    const product = await fetchWalmartProduct(norm.url);
-    product.walmart_item_id = norm.itemId;
-    if (norm.itemId) product.sources = { ...(product.sources || {}), walmart_item_id: "verified" };
-    return { normalized_url: norm.url, itemId: norm.itemId, product };
+    const raw = (data.input ?? data.url ?? "").trim();
+    if (!raw) throw new Error("Enter a Walmart URL, UPC / GTIN, or item ID.");
+    const { normalizedUrl, itemId, product } = await resolveAndFetch(raw);
+    return { normalized_url: normalizedUrl, itemId, product };
   });
