@@ -5,10 +5,10 @@ import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, CheckCircle2, HelpCircle, XCircle } from "lucide-react";
 
 const V = {
-  BUY: { label: "Strong Buy Candidate", color: "bg-emerald-600 text-white", Icon: CheckCircle2 },
-  REVIEW: { label: "Promising — Verify Supplier", color: "bg-amber-500 text-white", Icon: AlertTriangle },
-  SKIP: { label: "High Risk", color: "bg-red-600 text-white", Icon: XCircle },
-  INSUFFICIENT_DATA: { label: "Insufficient Data", color: "bg-muted text-foreground", Icon: HelpCircle },
+  BUY: { color: "bg-emerald-600 text-white", Icon: CheckCircle2 },
+  REVIEW: { color: "bg-amber-500 text-white", Icon: AlertTriangle },
+  SKIP: { color: "bg-red-600 text-white", Icon: XCircle },
+  INSUFFICIENT_DATA: { color: "bg-muted text-foreground", Icon: HelpCircle },
 } as const;
 
 export function VerdictCard({ v, calc, walmartPrice, bestSupplierName, quantity, canCalc }: {
@@ -21,6 +21,7 @@ export function VerdictCard({ v, calc, walmartPrice, bestSupplierName, quantity,
 }) {
   const style = V[v.verdict];
   const Icon = style.Icon;
+  const label = v.label ?? v.verdict;
   const confLabel = v.confidence >= 70 ? "High" : v.confidence >= 40 ? "Medium" : "Low";
   const recTest = Math.max(5, Math.min(50, Math.round((walmartPrice ? 250 / walmartPrice : 20))));
   const pending = "Pending supplier cost";
@@ -31,7 +32,7 @@ export function VerdictCard({ v, calc, walmartPrice, bestSupplierName, quantity,
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-bold ${style.color}`}>
-            <Icon className="h-4 w-4" /> {style.label}
+            <Icon className="h-4 w-4" /> {label}
           </div>
           <div className="mt-2 text-sm text-muted-foreground">{v.nextAction}</div>
         </div>
@@ -84,6 +85,13 @@ export function VerdictCard({ v, calc, walmartPrice, bestSupplierName, quantity,
         <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
           <div className="text-xs font-semibold text-amber-900">Main risks</div>
           <ul className="mt-1 space-y-0.5 text-xs text-amber-900">{v.risks.map((r) => <li key={r}>• {r}</li>)}</ul>
+        </div>
+      )}
+
+      {v.positives && v.positives.length > 0 && (
+        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+          <div className="text-xs font-semibold text-emerald-900">Positive signals</div>
+          <ul className="mt-1 space-y-0.5 text-xs text-emerald-900">{v.positives.slice(0, 5).map((r) => <li key={r}>• {r}</li>)}</ul>
         </div>
       )}
 
