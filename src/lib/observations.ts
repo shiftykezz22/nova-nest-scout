@@ -51,3 +51,18 @@ export function statusConfidence(s: VerificationStatus): number {
     case "unavailable": return 0;
   }
 }
+
+import { CheckCircle2, CheckCheck, HelpCircle, User, AlertTriangle, XCircle } from "lucide-react";
+
+export function statusMeta(s?: VerificationStatus) {
+  const status: VerificationStatus = s ?? "unavailable";
+  const Icon =
+    status === "verified" ? CheckCircle2
+    : status === "cross_checked" ? CheckCheck
+    : status === "single_source" ? CheckCircle2
+    : status === "user_entered" ? User
+    : status === "estimated" ? AlertTriangle
+    : status === "conflicting" ? XCircle
+    : HelpCircle;
+  return { label: STATUS_LABEL[status], tone: STATUS_TONE[status], Icon };
+}
