@@ -6,7 +6,7 @@ import { AlertTriangle, CheckCircle2, HelpCircle, XCircle } from "lucide-react";
 
 const V = {
   BUY: { label: "BUY", color: "bg-emerald-600 text-white", Icon: CheckCircle2 },
-  REVIEW: { label: "REVIEW", color: "bg-amber-500 text-white", Icon: AlertTriangle },
+  REVIEW: { label: "MAYBE", color: "bg-amber-500 text-white", Icon: AlertTriangle },
   SKIP: { label: "SKIP", color: "bg-red-600 text-white", Icon: XCircle },
   INSUFFICIENT_DATA: { label: "INSUFFICIENT DATA", color: "bg-muted text-foreground", Icon: HelpCircle },
 } as const;
