@@ -18,6 +18,9 @@ type SearchInput = {
   walmartPrice?: number;
   zip?: string;
   international?: boolean;
+  location?: string;
+  radiusMiles?: 10 | 25 | 50;
+  onlineOnly?: boolean;
 };
 
 const NYC_TERMS: Array<{ label: string; bucket: Supplier["region_bucket"]; q: string }> = [
@@ -119,20 +122,27 @@ function buildQueries(input: SearchInput): Array<{ q: string; kind: string; buck
   const model = input.model?.trim();
   const title = input.title?.trim() || brand || "";
   const genericType = input.category?.split(/[/>]/).pop()?.trim() || title.split(" ").slice(0, 4).join(" ");
+  const location = input.location?.trim() || "Brooklyn, New York";
+  const radius = input.radiusMiles ?? 25;
+  const online = input.onlineOnly === true;
   const q: Array<{ q: string; kind: string; bucket?: Supplier["region_bucket"] }> = [];
   if (input.upc) q.push({ q: `${input.upc} wholesale distributor case pack MOQ`, kind: "upc" });
   if (brand && model) q.push({ q: `"${brand}" "${model}" authorized distributor wholesale`, kind: "brand_model" });
   if (brand) q.push({ q: `"${brand}" manufacturer OR distributor wholesale`, kind: "brand" });
   if (genericType) {
+    if (!online) {
+      q.push({ q: `${brand ?? ""} ${model ?? ""} wholesale distributor near ${location}`.trim(), kind: "near_location" });
+      q.push({ q: `${genericType} wholesaler within ${radius} miles of ${location}`, kind: "radius" });
+      q.push({ q: `${genericType} distributors ${location}`, kind: "local_generic" });
+    }
     q.push({ q: `${genericType} bulk wholesale supplier MOQ case pack`, kind: "generic_bulk" });
     q.push({ q: `${genericType} private label manufacturer wholesale`, kind: "private_label" });
     q.push({ q: `${genericType} pallet OR case wholesale distributor USA`, kind: "pallet" });
-    q.push({ q: `${genericType} New York wholesaler distributor`, kind: "nyc" });
+    if (brand) q.push({ q: `${brand} authorized distributor`, kind: "authorized" });
     q.push({ q: `${genericType} thomasnet supplier`, kind: "thomasnet" });
-    for (const r of NYC_TERMS) q.push({ q: `${genericType} ${r.q}`, kind: "region", bucket: r.bucket });
     if (input.international !== false) q.push({ q: `${genericType} alibaba OR "global sources" OR "made-in-china" manufacturer`, kind: "international" });
   }
-  return q.slice(0, 16);
+  return q.slice(0, 12);
 }
 
 function dedupe<T>(arr: T[], key: (v: T) => string): T[] {
@@ -159,6 +169,13 @@ function toSupplier(r: TavilyResult, hint: { kind: string; bucket?: Supplier["re
   const { pm, conf } = matchConfidence(input, hay);
   const priceInSnippet = extractPrice(r.content);
   const moq = extractMoq(r.content);
+  const phone = extractPhone(r.content);
+  const address = extractAddress(r.content);
+  const match_kind: Supplier["match_kind"] = pm === "exact" ? "verified_exact"
+    : pm === "likely" ? "likely"
+    : pm === "similar" || pm === "category" ? "category"
+    : "unverified_lead";
+  const is_online = region_bucket === "international" || region_bucket === "us" || /shop|store|online|ecommerce/i.test(host);
   const warnings: string[] = [];
   if (pm === "weak") warnings.push("Weak product match — verify before using its price.");
   if (!priceInSnippet) warnings.push("Pricing not shown publicly — quote required.");
@@ -171,6 +188,7 @@ function toSupplier(r: TavilyResult, hint: { kind: string; bucket?: Supplier["re
     region_bucket,
     product_match: pm,
     match_confidence: conf,
+    match_kind,
     unit_cost: priceInSnippet,
     currency: "USD",
     moq,
@@ -180,6 +198,10 @@ function toSupplier(r: TavilyResult, hint: { kind: string; bucket?: Supplier["re
       snippet: r.content?.slice(0, 240),
       last_checked: new Date().toISOString(),
       quote_page: r.url,
+      phone: phone ?? undefined,
+      address: address ?? undefined,
+      approximate_location: address ?? (hint.bucket ? undefined : input.location),
+      is_online,
     },
     warnings,
     reasons: [
@@ -188,6 +210,16 @@ function toSupplier(r: TavilyResult, hint: { kind: string; bucket?: Supplier["re
     ],
   };
   return supplier;
+}
+
+function extractPhone(text: string): string | null {
+  const m = text.match(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/);
+  return m ? m[0] : null;
+}
+
+function extractAddress(text: string): string | null {
+  const m = text.match(/\b\d{1,5}\s+[A-Z][A-Za-z0-9.'\- ]{3,60},\s*[A-Z][A-Za-z .'\-]{2,30},\s*[A-Z]{2}\s*\d{5}/);
+  return m ? m[0] : null;
 }
 
 function readTavilyKey(): string | undefined {

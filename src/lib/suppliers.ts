@@ -8,6 +8,7 @@ export type Supplier = {
   region_bucket?: "brooklyn" | "queens" | "bronx" | "manhattan_si" | "long_island" | "north_nj" | "ct_epa" | "us" | "international";
   product_match?: "exact" | "likely" | "similar" | "category" | "weak";
   match_confidence?: number; // 0-100
+  match_kind?: "verified_exact" | "likely" | "category" | "unverified_lead";
   unit_cost?: number | null;
   currency?: string;
   moq?: number | null;
@@ -19,7 +20,16 @@ export type Supplier = {
   authorization_status?: "authorized" | "not_confirmed" | "unauthorized" | null;
   verification_status?: "verified_public" | "partially_verified" | "unverified" | "quote_required";
   source?: string;
-  contact_data?: { email?: string; phone?: string; quote_page?: string; last_checked?: string; snippet?: string };
+  contact_data?: {
+    email?: string;
+    phone?: string;
+    quote_page?: string;
+    last_checked?: string;
+    snippet?: string;
+    address?: string;
+    approximate_location?: string;
+    is_online?: boolean;
+  };
   warnings?: string[];
   reasons?: string[];
   estimated_landed_cost?: number | null;
