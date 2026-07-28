@@ -341,22 +341,6 @@ export function SupplierDiscovery({ product, scanId, initialSuppliers, selected,
   }
 }
 
-function EmptyState(props: { hasUpc: boolean; onBroaden: () => void; onOnline: () => void; onByUpc: () => void; onGeneric: () => void; onManual: () => void }) {
-  return (
-    <div className="rounded-xl border bg-muted/30 p-5 text-sm">
-      <div className="font-semibold">No matching suppliers yet</div>
-      <div className="mt-1 text-xs text-muted-foreground">Try one of these next steps:</div>
-      <div className="mt-3 flex flex-wrap gap-2">
-        <Button size="sm" variant="outline" onClick={props.onBroaden}>Broaden radius to 50 mi</Button>
-        <Button size="sm" variant="outline" onClick={props.onOnline}>Search online suppliers</Button>
-        {props.hasUpc && <Button size="sm" variant="outline" onClick={props.onByUpc}>Search by UPC only</Button>}
-        <Button size="sm" variant="outline" onClick={props.onGeneric}>Search by generic name</Button>
-        <Button size="sm" onClick={props.onManual}>Add supplier manually</Button>
-      </div>
-    </div>
-  );
-}
-
 function ManualForm({ onAdd, onCancel }: { onAdd: (s: Partial<Supplier> & { supplier_name: string }) => void; onCancel: () => void }) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
