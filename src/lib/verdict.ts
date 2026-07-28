@@ -3,6 +3,14 @@ import type { ProductData } from "./walmart";
 
 export type Verdict = "BUY" | "REVIEW" | "SKIP" | "INSUFFICIENT_DATA";
 
+// Centralized verdict thresholds. Adjust here to retune Buy / Maybe / Skip.
+export const VERDICT_THRESHOLDS = {
+  BUY: { profit: 5, roi: 30, margin: 15, confidence: 65, opportunity: 75 },
+  SKIP: { roi: 10, margin: 5, maxRisks: 4 },
+  MIN_CONFIDENCE: 40,
+  MAX_MISSING: 3,
+} as const;
+
 export type VerdictResult = {
   verdict: Verdict;
   confidence: number;

@@ -22,6 +22,33 @@ export function normalizeWalmartUrl(raw: string): { ok: boolean; url?: string; i
   return { ok: true, url: u.toString(), itemId };
 }
 
+export type InputKind = "url" | "upc" | "item_id";
+export type IdentifiedInput =
+  | { ok: true; kind: "url"; url: string; itemId?: string }
+  | { ok: true; kind: "item_id"; url: string; itemId: string }
+  | { ok: true; kind: "upc"; upc: string }
+  | { ok: false; error: string };
+
+// Detects whether raw input is a Walmart URL, a Walmart item ID (5-12 digits),
+// or a UPC / GTIN (12-14 digits). Whitespace / hyphens in numeric input are ignored.
+export function identifyInput(raw: string): IdentifiedInput {
+  const s = (raw ?? "").trim();
+  if (!s) return { ok: false, error: "Enter a Walmart URL, UPC / GTIN, or item ID." };
+  if (/^https?:\/\//i.test(s) || /walmart\.com/i.test(s)) {
+    const withProto = /^https?:\/\//i.test(s) ? s : `https://${s}`;
+    const n = normalizeWalmartUrl(withProto);
+    if (!n.ok || !n.url) return { ok: false, error: n.error || "Invalid Walmart URL." };
+    return { ok: true, kind: "url", url: n.url, itemId: n.itemId };
+  }
+  const digits = s.replace(/[\s-]/g, "");
+  if (!/^\d+$/.test(digits)) return { ok: false, error: "Paste a Walmart URL, or a numeric UPC / item ID." };
+  if (digits.length >= 12 && digits.length <= 14) return { ok: true, kind: "upc", upc: digits };
+  if (digits.length >= 5 && digits.length <= 11) {
+    return { ok: true, kind: "item_id", url: `https://www.walmart.com/ip/${digits}`, itemId: digits };
+  }
+  return { ok: false, error: "Number must be a 5-11 digit Walmart item ID or 12-14 digit UPC / GTIN." };
+}
+
 export type FieldSource = "verified" | "public" | "user" | "estimated" | "unavailable";
 
 export type ProductData = {

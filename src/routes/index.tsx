@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { analyzeProductGuest } from "@/lib/scan.functions";
-import { normalizeWalmartUrl } from "@/lib/walmart";
+import { identifyInput } from "@/lib/walmart";
 import { saveGuestScan, guestUsed } from "@/lib/guest";
 
 export const Route = createFileRoute("/")({
@@ -28,8 +28,9 @@ function Landing() {
   const analyze = useServerFn(analyzeProductGuest);
 
   async function onScan() {
-    const norm = normalizeWalmartUrl(url);
-    if (!norm.ok) { toast.error(norm.error || "Invalid URL"); return; }
+    if (loading) return;
+    const id = identifyInput(url);
+    if (!id.ok) { toast.error(id.error); return; }
     if (guestUsed()) {
       toast.error("Free guest scan used. Sign up for unlimited scans.");
       router.navigate({ to: "/auth", search: { mode: "signup" } as never });
@@ -37,10 +38,10 @@ function Landing() {
     }
     setLoading(true);
     try {
-      const res = await analyze({ data: { url: norm.url! } });
-      const id = crypto.randomUUID();
+      const res = await analyze({ data: { input: url } });
+      const scanId = crypto.randomUUID();
       saveGuestScan({
-        id,
+        id: scanId,
         input_url: url,
         normalized_url: res.normalized_url,
         walmart_item_id: res.itemId,
@@ -85,16 +86,15 @@ function Landing() {
 
         <div className="mt-8 rounded-2xl border bg-card p-4 shadow-sm md:p-6">
           <label className="text-left block text-sm font-semibold text-foreground">
-            Paste Walmart Product URL
+            Walmart URL, UPC / GTIN, or item ID
             <span className="text-primary"> *</span>
           </label>
           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
             <Input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://www.walmart.com/ip/..."
+              placeholder="walmart.com/ip/... · UPC (12-14 digits) · item ID"
               className="h-12 rounded-xl text-base"
-              inputMode="url"
             />
             <Button onClick={onScan} disabled={loading || !url} size="lg" className="h-12 rounded-xl">
               {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
