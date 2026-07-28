@@ -374,7 +374,7 @@ async function resolveAndFetch(rawInput: string): Promise<{
   } else if (id.kind === "item_id") {
     normalizedUrl = id.url;
     itemId = id.itemId;
-  } else {
+  } else if (id.kind === "upc") {
     upc = id.upc;
     const resolved = await resolveUpcToWalmartUrl(id.upc);
     if (!resolved.url) {
@@ -399,6 +399,10 @@ async function resolveAndFetch(rawInput: string): Promise<{
     }
     normalizedUrl = resolved.url;
     itemId = resolved.itemId;
+  } else {
+    // "query" kind should be routed through searchWalmartMatches; if it lands
+    // here (legacy caller), fall back to a Walmart search page with no data.
+    throw new Error("Keyword search must go through product picker.");
   }
 
   const sourcesTried: string[] = ["walmart"];
