@@ -6,6 +6,7 @@ import { evaluate } from "@/lib/verdict";
 import { ProductEditor } from "./ProductEditor";
 import { SupplierList } from "./SupplierList";
 import { VerdictCard } from "./VerdictCard";
+import { ProductHero } from "./ProductHero";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -123,6 +124,7 @@ export function ResultView({ product, onProductChange, scanId, initialSuppliers,
 
   return (
     <div className="space-y-6">
+      <ProductHero product={product} />
       {retrieval && (retrieval.walmart_status !== "ok" || retrieval.fields_missing.length > 0) && (
         <div className="rounded-2xl border bg-card p-4 text-sm">
           <div className="font-semibold">
