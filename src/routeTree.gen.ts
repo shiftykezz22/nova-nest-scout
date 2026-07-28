@@ -17,6 +17,7 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedScansRouteImport } from './routes/_authenticated/scans'
+import { Route as AuthenticatedSavedRouteImport } from './routes/_authenticated/saved'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedScansIdRouteImport } from './routes/_authenticated/scans.$id'
 
@@ -59,6 +60,11 @@ const AuthenticatedScansRoute = AuthenticatedScansRouteImport.update({
   path: '/scans',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedSavedRoute = AuthenticatedSavedRouteImport.update({
+  id: '/saved',
+  path: '/saved',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
@@ -78,6 +84,7 @@ export interface FileRoutesByFullPath {
   '/privacy': typeof PrivacyRoute
   '/terms': typeof TermsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/saved': typeof AuthenticatedSavedRoute
   '/scans': typeof AuthenticatedScansRouteWithChildren
   '/scans/$id': typeof AuthenticatedScansIdRoute
 }
@@ -89,6 +96,7 @@ export interface FileRoutesByTo {
   '/privacy': typeof PrivacyRoute
   '/terms': typeof TermsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/saved': typeof AuthenticatedSavedRoute
   '/scans': typeof AuthenticatedScansRouteWithChildren
   '/scans/$id': typeof AuthenticatedScansIdRoute
 }
@@ -102,6 +110,7 @@ export interface FileRoutesById {
   '/privacy': typeof PrivacyRoute
   '/terms': typeof TermsRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/_authenticated/saved': typeof AuthenticatedSavedRoute
   '/_authenticated/scans': typeof AuthenticatedScansRouteWithChildren
   '/_authenticated/scans/$id': typeof AuthenticatedScansIdRoute
 }
@@ -115,6 +124,7 @@ export interface FileRouteTypes {
     | '/privacy'
     | '/terms'
     | '/dashboard'
+    | '/saved'
     | '/scans'
     | '/scans/$id'
   fileRoutesByTo: FileRoutesByTo
@@ -126,6 +136,7 @@ export interface FileRouteTypes {
     | '/privacy'
     | '/terms'
     | '/dashboard'
+    | '/saved'
     | '/scans'
     | '/scans/$id'
   id:
@@ -138,6 +149,7 @@ export interface FileRouteTypes {
     | '/privacy'
     | '/terms'
     | '/_authenticated/dashboard'
+    | '/_authenticated/saved'
     | '/_authenticated/scans'
     | '/_authenticated/scans/$id'
   fileRoutesById: FileRoutesById
@@ -210,6 +222,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedScansRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/saved': {
+      id: '/_authenticated/saved'
+      path: '/saved'
+      fullPath: '/saved'
+      preLoaderRoute: typeof AuthenticatedSavedRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/dashboard': {
       id: '/_authenticated/dashboard'
       path: '/dashboard'
@@ -240,11 +259,13 @@ const AuthenticatedScansRouteWithChildren =
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
+  AuthenticatedSavedRoute: typeof AuthenticatedSavedRoute
   AuthenticatedScansRoute: typeof AuthenticatedScansRouteWithChildren
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
+  AuthenticatedSavedRoute: AuthenticatedSavedRoute,
   AuthenticatedScansRoute: AuthenticatedScansRouteWithChildren,
 }
 
