@@ -126,18 +126,18 @@ export function ResultView({ product, onProductChange, scanId, initialSuppliers,
       {retrieval && (retrieval.walmart_status !== "ok" || retrieval.fields_missing.length > 0) && (
         <div className="rounded-2xl border bg-card p-4 text-sm">
           <div className="font-semibold">
-            {retrieval.walmart_status === "blocked"
-              ? "Walmart blocked the direct request."
-              : retrieval.walmart_status === "empty"
-                ? "Walmart returned no product data."
-                : retrieval.walmart_status === "network_error"
-                  ? "Walmart request failed."
-                  : "Some fields could not be retrieved."}
+            {retrieval.walmart_status === "ok"
+              ? "Product found. Some optional fields were not available from the current source."
+              : retrieval.walmart_status === "blocked"
+                ? "Walmart blocked the direct request and the product provider did not return data."
+                : retrieval.walmart_status === "empty"
+                  ? "No product data was returned."
+                  : "Product retrieval failed."}
           </div>
           <div className="mt-1 text-xs text-muted-foreground">
-            Sources checked: {retrieval.sources_tried.join(", ") || "walmart"}.
+            Provider: {retrieval.provider ?? "walmart"}. Sources checked: {retrieval.sources_tried.join(", ") || "walmart"}.
             {retrieval.tavily_used && ` Public search fallback recovered ${retrieval.fields_recovered} field${retrieval.fields_recovered === 1 ? "" : "s"}.`}
-            {retrieval.fields_missing.length > 0 && ` Still unavailable: ${retrieval.fields_missing.join(", ")}.`}
+            {retrieval.fields_missing.length > 0 && ` Unavailable optional fields: ${retrieval.fields_missing.join(", ")}.`}
           </div>
         </div>
       )}
