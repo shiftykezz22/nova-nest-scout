@@ -1,53 +1,90 @@
-## Root cause
 
-Tracing the flow end-to-end against the running app and the scan history in the screenshot (two saved Logitech G305 scans with real titles/brands), the pipeline is actually working:
+## Goal
 
-- `identifyInput` extracts `774459101` from `/ip/774459101?sid=...` correctly.
-- `analyzeProduct` (auth) and `analyzeProductGuest` call SerpApi via `fetchSerpApiProduct`, save the row, and return the scan id.
-- `dashboard.tsx` navigates to `/scans/$id`; `scans.$id.tsx` loads `product_data` from the DB and renders `<ResultView>`.
+Restructure the scan results page around the decision, make profitability honest, and rebuild Supplier Discovery so ZIP is optional and search auto-uses the scanned product. No changes to the working Walmart retrieval pipeline, DB schema, or auth.
 
-What's broken is the **result page rendering**, not the pipeline:
+## Reuse (unchanged)
 
-1. **No product image anywhere.** `ResultView` renders `VerdictCard` + `ProductEditor` + supplier sections. Neither surfaces `product.image`, even though SerpApi populates it. So even a fully retrieved scan looks empty at a glance.
-2. **No consolidated product hero.** Title/brand/price/rating/review count/category/seller are scattered inside the "Product details" field grid — the required top-of-page identity block (image + title + brand + item id + price + rating + reviews + category + seller + availability + source) is missing.
-3. **Guest flow saves an ad-hoc `crypto.randomUUID()` in `localStorage`** (never persisted server-side), which is intentional for the guest path but means the "refresh preserves result" check must go through the signed-in `/scans/$id` route where data is DB-backed. That already works; no change needed.
+- `src/lib/scan.functions.ts` (retrieval)
+- `src/lib/verdict.ts`, `src/lib/calc.ts` (formulas already match spec)
+- `src/lib/suppliers.functions.ts` server functions (Tavily-only, key stays server-side)
+- `src/components/ProductHero.tsx`, `VerdictCard.tsx`, `ProductEditor.tsx`
+- DB tables and RLS as-is
 
-Everything else the phase spec asks for is already implemented: SerpApi is the primary provider, `retrieval.provider` is set, verdict shows `Score pending` + `Insufficient supplier data` when unit cost is missing, calc stats display `—` until cost is entered, and the analyze button is disabled while loading. Those don't need changes.
+## Changes
 
-## Plan
+### A. Results page hierarchy (`src/components/ResultView.tsx`)
 
-Scope: presentation-only edits on the result view. No backend, no DB, no route changes.
+Reorder to: ProductHero → Decision summary → Profitability workspace → Supplier discovery → collapsed "View full product details" accordion (wraps existing `ProductEditor`, closed by default, 2-col on md+, stacked on mobile).
 
-1. **New component `src/components/ProductHero.tsx`**
-   - Left: product image (`product.image`) with rounded card, `object-contain`, fixed aspect on mobile; graceful fallback tile with `ShoppingBag` icon when image is null or fails to load (`onError` swap).
-   - Right: title, brand, small chips for Walmart Item ID and UPC, price (large, red primary) with previous_price strikethrough, rating stars + review count, category, seller / shipped_by, stock status badge, and a footer line "Source: SerpApi" (or `retrieval.provider` humanized) with the "Last updated" timestamp.
-   - All fields use optional chaining and render "Not available" for missing optional fields; hide the whole right-column row only when every field in that row is null.
-   - Mobile-first: single column, image on top; two columns from `md:` up.
+### B. Decision summary
 
-2. **Wire `ProductHero` into `src/components/ResultView.tsx`**
-   - Render it above the existing retrieval banner and `VerdictCard`.
-   - Pass `product` and `retrieval` through; no other prop changes.
+Keep `VerdictCard` and extend with three compact signal chips derived from already-retrieved data:
+- Demand: from `rating` + `review_count` (thresholds: strong ≥500 reviews & ≥4.2, moderate ≥50, weak otherwise, unknown if missing)
+- Competition: from `seller`/marketplace presence + review count (proxy only; label "estimated")
+- Risk: from existing `verdict.risks` and retrieval status
+Each chip shows Known vs Estimated badge. No new data sources.
 
-3. **Small polish in `VerdictCard.tsx`**
-   - When `canCalc === false`, change the amber note to the exact copy from the spec: "Walmart product found. Add a supplier cost or supplier URL to calculate profitability." and label the four pending stats (Landed cost, Profit, Margin, ROI, Break-even) with "Pending supplier cost" instead of `—`. Verdict label stays `INSUFFICIENT DATA`; the `nextAction` line beneath the badge will read "Insufficient supplier data".
+### C. Profitability workspace (new component `src/components/ProfitabilityPanel.tsx`)
 
-4. **Verification (post-implementation, in build mode)**
-   - Live-test with `https://www.walmart.com/ip/774459101?sid=...` via Playwright against `localhost:8080`:
-     - Submit from the landing page (guest flow) and from `/dashboard` (auth flow).
-     - Assert: image renders (or fallback if SerpApi omits), title / brand / price / rating / review count / category / seller visible, "Score pending" and "Pending supplier cost" copy present.
-     - Reload `/scans/$id` and confirm the same data renders (DB-backed, not React state).
-   - Screenshot the result page mobile-width (393px) and desktop (1280px) and view both.
+Cards for: Supplier unit cost, Shipping/unit, Prep/unit, Referral fee, Other costs, Landed cost, Profit/unit, Margin %, ROI %, Break-even price. Uses existing `calculate()` from `src/lib/calc.ts` (formulas already match spec).
 
-Files touched:
+When `sellingPrice<=0` or `unitCost<=0`: show "Cost data required" on dependent cards with a one-line explanation of the missing input. Never invent values.
 
-- `src/components/ProductHero.tsx` (new)
-- `src/components/ResultView.tsx` (import + render hero)
-- `src/components/VerdictCard.tsx` (copy tweaks for pending state)
+"Enter or edit costs" drawer (shadcn `Sheet` on desktop, bottom sheet on mobile) with local editable state:
+- Supplier unit price, Quantity/MOQ, Total supplier shipping (auto ÷ qty → per-unit), Duties (total or per-unit toggle), Prep/packaging, Referral (% or $), Other costs.
+- Live recalculation via `useMemo(calculate,…)`. Values are held in `ResultView` state and flow into the existing `CalcInputs`; persistence stays as today (settings unchanged this phase).
 
-No changes to `scan.functions.ts`, routes, DB schema, RLS, or the SerpApi request.
+### D. Full Product Details
 
-## Out of scope
+Move current `ProductEditor` section into shadcn `Accordion` labeled "View full product details", `defaultValue=undefined` (collapsed). Inside: md:grid-cols-2 on desktop, stacked on mobile (styles only; no field logic change).
 
-- Any redesign of existing sections.
-- Supplier discovery, calc engine, verdict thresholds.
-- Backend response shape refactor to the exact keys in the phase spec (`currentPrice`, `mainImage`, etc.) — the existing normalized `ProductData` already carries the same data under stable names the UI reads today; renaming would ripple through DB rows, calc, and supplier code with no user-visible benefit.
+### E. Supplier Discovery redesign
+
+New component `src/components/SupplierDiscovery.tsx` replacing the current inline section in `ResultView`.
+
+Controls (auto-populated from `product`, all editable):
+- Location text input (default "Brooklyn, NY")
+- Radius select: 10 / 25 / 50 miles
+- Type filter chips: All, Local, Online, Manufacturer, Distributor, Wholesaler
+- Match filter: All / Exact / Likely / Category
+- Sort: Best match, Lowest cost, Local first
+
+Remove ZIP and Test-qty inputs from this section (qty lives in Profitability drawer).
+
+Server-fn changes (`src/lib/suppliers.functions.ts`):
+- Extend `SearchInput` with `location?: string`, `radiusMiles?: 10|25|50`.
+- `buildQueries` uses `location`/radius instead of hard-coded NYC boroughs when provided; still fans out to: `[brand] [model] wholesale distributor near [location]`, `[UPC] supplier`, `[generic] wholesaler within [radius] miles of [location]`, `[brand] authorized distributor`, `[category] distributors [location + neighboring region]`. Retains international query when enabled.
+- Dedupe key upgraded to combine domain + normalized business name + phone (extracted from snippet) + address line.
+- Add `evidence` fields on each `Supplier`: `match_kind: "verified_exact" | "likely" | "category" | "unverified_lead"` derived from existing UPC/brand/model hit logic; keep existing `product_match` for back-compat.
+
+Supplier card (update `src/components/SupplierList.tsx`):
+- Show name, type, Local/Online badge, approximate location, website, phone (if in snippet), match evidence + confidence, source link.
+- "Verify product and pricing" button (opens supplier URL in new tab).
+- "Use this supplier cost" button — disabled until unit cost is entered/confirmed in a small inline input on the card; on click, sets the selected supplier + pushes cost into Profitability inputs.
+- Never asserts exact stock unless `match_kind==="verified_exact"`.
+
+States:
+- Loading skeleton rows
+- Partial results banner when some queries failed
+- Empty state with next-action buttons: Broaden radius, Search online only, Search by UPC, Search by generic name, Add supplier manually
+- API-error state with retry
+- `TAVILY_API_KEY` missing → keep current manual-entry fallback and status message
+
+### F. Non-goals / guardrails
+
+- No Google Places / Yelp / paid APIs.
+- No schema migration; new fields (`location`, `phone`, `match_kind`) ride inside existing `supplier_results.contact_data` JSONB and mapped types.
+- Tavily key stays in server functions only.
+- No fabricated suppliers, prices, or profitability. Existing retrieval pipeline untouched.
+
+## Files touched
+
+- Edit: `src/components/ResultView.tsx`, `src/components/SupplierList.tsx`, `src/lib/suppliers.functions.ts`, `src/lib/suppliers.ts` (types only)
+- Add: `src/components/ProfitabilityPanel.tsx`, `src/components/SupplierDiscovery.tsx`
+- No DB migrations, no changes to `scan.functions.ts`, `calc.ts`, `verdict.ts`, `ProductHero.tsx`, `ProductEditor.tsx`, auth, or routes.
+
+## Verification
+
+- Typecheck + build.
+- Manual: run a scan (e.g. Logitech `774459101`) → verify new order, collapsed details, drawer recalculates live, supplier search runs without ZIP, filters work, empty-state actions appear when no results.
