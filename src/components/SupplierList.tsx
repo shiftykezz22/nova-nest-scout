@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ExternalLink, CheckCircle2, Copy, Phone, MapPin } from "lucide-react";
+import { ExternalLink, CheckCircle2, Copy, Phone, MapPin, Search, Scan } from "lucide-react";
 import { toast } from "sonner";
 import { assignBadges, scoreSupplier, type Supplier } from "@/lib/suppliers";
 import { buildQuoteRequest } from "@/lib/suppliers";
@@ -13,6 +13,7 @@ type Props = {
   selectedId?: string | null;
   onSelect?: (s: Supplier) => void;
   onUseCost?: (s: Supplier, unitCost: number) => void;
+  onAnalyze?: (s: Supplier) => void;
   product?: { title?: string; upc_gtin?: string; model?: string };
   zip?: string;
 };
@@ -28,7 +29,15 @@ const VERIFY_LABEL: Record<NonNullable<Supplier["verification_status"]>, string>
   verified_public: "Verified Public", partially_verified: "Partially Verified", unverified: "Unverified", quote_required: "Quote Required",
 };
 
-export function SupplierList({ suppliers, walmartPrice, selectedId, onSelect, onUseCost, product, zip }: Props) {
+const ORIGIN_LABEL: Record<NonNullable<Supplier["origin"]>, { label: string; className: string }> = {
+  generated_link: { label: "Generated Link", className: "bg-slate-100 text-slate-700 border-slate-200" },
+  live_search: { label: "Live Search", className: "bg-emerald-50 text-emerald-800 border-emerald-200" },
+  user_pasted: { label: "User Pasted", className: "bg-violet-50 text-violet-800 border-violet-200" },
+  estimated: { label: "Estimated", className: "bg-amber-50 text-amber-900 border-amber-200" },
+  manual: { label: "Manual", className: "bg-amber-50 text-amber-900 border-amber-200" },
+};
+
+export function SupplierList({ suppliers, walmartPrice, selectedId, onSelect, onUseCost, onAnalyze, product, zip }: Props) {
   const badges = useMemo(() => assignBadges(suppliers, walmartPrice), [suppliers, walmartPrice]);
   const scored = useMemo(() => suppliers.map((s) => ({ s, score: scoreSupplier(s, walmartPrice).total })), [suppliers, walmartPrice]);
 
@@ -57,6 +66,7 @@ export function SupplierList({ suppliers, walmartPrice, selectedId, onSelect, on
               badgeList={badges[key] ?? []}
               onSelect={onSelect}
               onUseCost={onUseCost}
+              onAnalyze={onAnalyze}
               onCopyQuote={() => copyQuote(s)}
             />
           );
@@ -66,13 +76,14 @@ export function SupplierList({ suppliers, walmartPrice, selectedId, onSelect, on
   );
 }
 
-function SupplierCard({ s, score, isSelected, badgeList, onSelect, onUseCost, onCopyQuote }: {
+function SupplierCard({ s, score, isSelected, badgeList, onSelect, onUseCost, onAnalyze, onCopyQuote }: {
   s: Supplier;
   score: number;
   isSelected: boolean;
   badgeList: string[];
   onSelect?: (s: Supplier) => void;
   onUseCost?: (s: Supplier, unitCost: number) => void;
+  onAnalyze?: (s: Supplier) => void;
   onCopyQuote: () => void;
 }) {
   const [costInput, setCostInput] = useState<string>(typeof s.unit_cost === "number" ? String(s.unit_cost) : "");
@@ -83,6 +94,14 @@ function SupplierCard({ s, score, isSelected, badgeList, onSelect, onUseCost, on
   const phone = s.contact_data?.phone;
   const parsed = parseFloat(costInput);
   const canUseCost = Number.isFinite(parsed) && parsed > 0;
+  const originMeta = s.origin ? ORIGIN_LABEL[s.origin] : null;
+  const isGenerated = s.origin === "generated_link";
+
+  function copyQuery() {
+    if (!s.query) return;
+    navigator.clipboard.writeText(s.query);
+    toast.success("Search query copied");
+  }
 
   return (
     <div className={`rounded-xl border bg-card p-4 ${isSelected ? "ring-2 ring-primary" : ""}`}>
@@ -95,7 +114,8 @@ function SupplierCard({ s, score, isSelected, badgeList, onSelect, onUseCost, on
             {badgeList.map((b) => <Badge key={b} className="bg-primary/10 text-primary border-primary/20" variant="outline">{b}</Badge>)}
           </div>
           <div className="mt-1 flex flex-wrap gap-1.5">
-            <Badge variant="outline" className={`text-[10px] ${kindMeta.className}`}>{kindMeta.label} · {s.match_confidence ?? 0}%</Badge>
+            {originMeta && <Badge variant="outline" className={`text-[10px] ${originMeta.className}`}>{originMeta.label}</Badge>}
+            {!isGenerated && <Badge variant="outline" className={`text-[10px] ${kindMeta.className}`}>{kindMeta.label} · {s.match_confidence ?? 0}%</Badge>}
             {s.supplier_type && s.supplier_type !== "unknown" && <Badge variant="outline" className="text-[10px] capitalize">{s.supplier_type.replace(/_/g, " ")}</Badge>}
             <Badge variant="outline" className="text-[10px]">{isLocal ? "Local" : "Online"}</Badge>
           </div>
@@ -109,11 +129,13 @@ function SupplierCard({ s, score, isSelected, badgeList, onSelect, onUseCost, on
           )}
         </div>
         <div className="text-right">
-          <div className="text-2xl font-bold text-foreground">{score}</div>
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Match score</div>
+          {!isGenerated && <>
+            <div className="text-2xl font-bold text-foreground">{score}</div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Match score</div>
+          </>}
           {typeof s.unit_cost === "number" ? (
             <div className="mt-2 text-sm font-semibold">${s.unit_cost.toFixed(2)}<span className="text-xs text-muted-foreground">/unit</span></div>
-          ) : (
+          ) : isGenerated ? null : (
             <div className="mt-2 text-xs text-muted-foreground">Quote required</div>
           )}
           {typeof s.moq === "number" && <div className="text-xs text-muted-foreground">MOQ {s.moq}</div>}
@@ -122,18 +144,26 @@ function SupplierCard({ s, score, isSelected, badgeList, onSelect, onUseCost, on
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {s.supplier_url && (
           <Button size="sm" variant="outline" asChild>
-            <a href={s.supplier_url} target="_blank" rel="noopener noreferrer nofollow"><ExternalLink className="mr-1 h-3.5 w-3.5" /> Verify product & pricing</a>
+            <a href={s.supplier_url} target="_blank" rel="noopener noreferrer nofollow"><Search className="mr-1 h-3.5 w-3.5" /> {isGenerated ? "Open search" : "Verify product & pricing"}</a>
           </Button>
         )}
-        {onSelect && (
+        {s.query && (
+          <Button size="sm" variant="outline" onClick={copyQuery}><Copy className="mr-1 h-3.5 w-3.5" /> Copy query</Button>
+        )}
+        {onAnalyze && s.supplier_url && !isGenerated && (
+          <Button size="sm" variant="outline" onClick={() => onAnalyze(s)}><Scan className="mr-1 h-3.5 w-3.5" /> Analyze link</Button>
+        )}
+        {onSelect && !isGenerated && (
           <Button size="sm" variant={isSelected ? "default" : "outline"} onClick={() => onSelect(s)}>
             {isSelected ? <><CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Selected</> : "Select supplier"}
           </Button>
         )}
-        <Button size="sm" variant="outline" onClick={onCopyQuote}>
-          <Copy className="mr-1 h-3.5 w-3.5" /> Copy quote request
-        </Button>
-        {onUseCost && (
+        {!isGenerated && (
+          <Button size="sm" variant="outline" onClick={onCopyQuote}>
+            <Copy className="mr-1 h-3.5 w-3.5" /> Copy quote request
+          </Button>
+        )}
+        {onUseCost && !isGenerated && (
           <div className="ml-auto flex items-center gap-2">
             <Input inputMode="decimal" placeholder="Confirm $/unit" value={costInput} onChange={(e) => setCostInput(e.target.value)} className="h-8 w-32" />
             <Button size="sm" disabled={!canUseCost} onClick={() => canUseCost && onUseCost(s, parsed)}>Use this cost</Button>

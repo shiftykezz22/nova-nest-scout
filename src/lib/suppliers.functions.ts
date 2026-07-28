@@ -194,6 +194,9 @@ function toSupplier(r: TavilyResult, hint: { kind: string; bucket?: Supplier["re
     moq,
     verification_status: priceInSnippet ? "partially_verified" : "quote_required",
     source: `tavily:${hint.kind}`,
+    origin: "live_search",
+    channel: region_bucket === "international" ? "overseas" : (region_bucket && !["us", "international"].includes(region_bucket)) ? "local" : "wholesale",
+    query: hint.kind,
     contact_data: {
       snippet: r.content?.slice(0, 240),
       last_checked: new Date().toISOString(),
@@ -306,5 +309,99 @@ export const searchAndSaveSuppliers = createServerFn({ method: "POST" })
   });
 
 export const tavilyStatus = createServerFn({ method: "GET" }).handler(async () => {
-  return { configured: !!readTavilyKey() };
+  const tavily = !!readTavilyKey();
+  const serper = !!(process.env.SERPER_API_KEY || process.env.SERPAPI_KEY);
+  return { configured: tavily || serper, tavily, serper };
 });
+
+function extractTitle(html: string): string | null {
+  const og = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
+  if (og) return og[1].trim();
+  const t = html.match(/<title[^>]*>([^<]{3,200})<\/title>/i);
+  return t ? t[1].trim() : null;
+}
+
+function stripTags(html: string): string {
+  return html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+}
+
+type AnalyzeInput = {
+  url: string;
+  productScanId?: string;
+  title?: string;
+  brand?: string;
+  upc?: string;
+  model?: string;
+  size?: string;
+};
+
+async function fetchSupplierPage(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { "user-agent": "Mozilla/5.0 (compatible; NovaNestScoutBot/1.0)", accept: "text/html,*/*" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return null;
+    const ct = res.headers.get("content-type") ?? "";
+    if (!/text\/html|application\/xhtml/i.test(ct)) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+export const analyzeSupplierUrl = createServerFn({ method: "POST" })
+  .inputValidator((data: AnalyzeInput) => data)
+  .handler(async ({ data }) => {
+    let host = "";
+    try { host = new URL(data.url).hostname; } catch { throw new Error("Invalid URL"); }
+    const html = await fetchSupplierPage(data.url);
+    const text = html ? stripTags(html).slice(0, 8000) : "";
+    const title = html ? extractTitle(html) : null;
+    const hay = `${title ?? ""}\n${text}\n${host}`;
+    const price = extractPrice(text);
+    const moq = extractMoq(text);
+    const phone = extractPhone(text);
+    const address = extractAddress(text);
+    const type = classifyType(hay || host);
+    const geo = classifyCountry(hay, host);
+    const { pm, conf } = matchConfidence({
+      title: data.title, brand: data.brand, upc: data.upc, model: data.model, size: data.size,
+    }, hay);
+    const match_kind: Supplier["match_kind"] = pm === "exact" ? "verified_exact" : pm === "likely" ? "likely" : pm === "similar" || pm === "category" ? "category" : "unverified_lead";
+    const reasons: string[] = [];
+    if (data.upc && hay.toLowerCase().includes(data.upc.toLowerCase())) reasons.push("UPC/GTIN found on the page.");
+    if (data.brand && hay.toLowerCase().includes(data.brand.toLowerCase())) reasons.push("Brand mentioned on the page.");
+    if (data.model && data.model.length > 2 && hay.toLowerCase().includes(data.model.toLowerCase())) reasons.push("Model number mentioned on the page.");
+    if (!reasons.length) reasons.push("No strong identifiers matched — verify manually.");
+    const supplier: Supplier = {
+      supplier_name: host.replace(/^www\./, ""),
+      supplier_url: data.url,
+      supplier_type: type,
+      country: geo.country,
+      region_bucket: geo.region_bucket,
+      product_match: pm,
+      match_confidence: conf,
+      match_kind,
+      unit_cost: price,
+      currency: "USD",
+      moq,
+      verification_status: price ? "partially_verified" : "quote_required",
+      source: "user_pasted",
+      origin: "user_pasted",
+      channel: "pasted",
+      contact_data: {
+        snippet: (title ?? text.slice(0, 200)) || undefined,
+        phone: phone ?? undefined,
+        address: address ?? undefined,
+        approximate_location: address ?? undefined,
+        is_online: true,
+        last_checked: new Date().toISOString(),
+        quote_page: data.url,
+      },
+      reasons,
+      warnings: html ? [] : ["Could not fetch the page — analysis is limited to the URL host."],
+    };
+    return { supplier, fetched: !!html };
+  });

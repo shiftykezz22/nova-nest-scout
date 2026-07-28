@@ -20,6 +20,9 @@ export type Supplier = {
   authorization_status?: "authorized" | "not_confirmed" | "unauthorized" | null;
   verification_status?: "verified_public" | "partially_verified" | "unverified" | "quote_required";
   source?: string;
+  channel?: "wholesale" | "overseas" | "local" | "marketplace" | "pasted" | "live";
+  origin?: "generated_link" | "live_search" | "user_pasted" | "estimated" | "manual";
+  query?: string;
   contact_data?: {
     email?: string;
     phone?: string;
