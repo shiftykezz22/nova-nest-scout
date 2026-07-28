@@ -5,10 +5,10 @@ import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, CheckCircle2, HelpCircle, XCircle } from "lucide-react";
 
 const V = {
-  BUY: { label: "BUY", color: "bg-emerald-600 text-white", Icon: CheckCircle2 },
-  REVIEW: { label: "MAYBE", color: "bg-amber-500 text-white", Icon: AlertTriangle },
-  SKIP: { label: "SKIP", color: "bg-red-600 text-white", Icon: XCircle },
-  INSUFFICIENT_DATA: { label: "INSUFFICIENT DATA", color: "bg-muted text-foreground", Icon: HelpCircle },
+  BUY: { label: "Strong Buy Candidate", color: "bg-emerald-600 text-white", Icon: CheckCircle2 },
+  REVIEW: { label: "Promising — Verify Supplier", color: "bg-amber-500 text-white", Icon: AlertTriangle },
+  SKIP: { label: "High Risk", color: "bg-red-600 text-white", Icon: XCircle },
+  INSUFFICIENT_DATA: { label: "Insufficient Data", color: "bg-muted text-foreground", Icon: HelpCircle },
 } as const;
 
 export function VerdictCard({ v, calc, walmartPrice, bestSupplierName, quantity, canCalc }: {

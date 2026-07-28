@@ -5,9 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
-import { analyzeProductGuest } from "@/lib/scan.functions";
+import { analyzeProductGuest, searchWalmartMatches } from "@/lib/scan.functions";
 import { identifyInput } from "@/lib/walmart";
 import { saveGuestScan, guestUsed } from "@/lib/guest";
+import { SearchResults, type Candidate } from "@/components/SearchResults";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -25,12 +26,12 @@ function Landing() {
   const router = useRouter();
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
+  const [candidates, setCandidates] = useState<Candidate[] | null>(null);
+  const [searchWarn, setSearchWarn] = useState<string | null>(null);
   const analyze = useServerFn(analyzeProductGuest);
+  const search = useServerFn(searchWalmartMatches);
 
-  async function onScan() {
-    if (loading) return;
-    const id = identifyInput(url);
-    if (!id.ok) { toast.error(id.error); return; }
+  async function runAnalyze(input: string) {
     if (guestUsed()) {
       toast.error("Free guest scan used. Sign up for unlimited scans.");
       router.navigate({ to: "/auth", search: { mode: "signup" } as never });
@@ -38,11 +39,11 @@ function Landing() {
     }
     setLoading(true);
     try {
-      const res = await analyze({ data: { input: url } });
+      const res = await analyze({ data: { input } });
       const scanId = crypto.randomUUID();
       saveGuestScan({
         id: scanId,
-        input_url: url,
+        input_url: input,
         normalized_url: res.normalized_url,
         walmart_item_id: res.itemId,
         product_data: res.product as never,
@@ -52,6 +53,32 @@ function Landing() {
       router.navigate({ to: "/guest-result" });
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onScan() {
+    if (loading) return;
+    const id = identifyInput(url);
+    if (!id.ok) { toast.error(id.error); return; }
+    // Direct URL or item ID: scan immediately.
+    if (id.kind === "url" || id.kind === "item_id") {
+      setCandidates(null);
+      await runAnalyze(url);
+      return;
+    }
+    // UPC or keyword: fetch candidates first, let user select.
+    setLoading(true);
+    setSearchWarn(null);
+    try {
+      const r = await search({ data: { input: url } });
+      if (r.kind === "direct") { await runAnalyze(r.url ?? url); return; }
+      setCandidates(r.candidates);
+      if (r.warning) setSearchWarn(r.warning);
+      if (!r.candidates.length && !r.warning) setSearchWarn("No matches found. Try a Walmart URL or item ID.");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Search failed");
     } finally {
       setLoading(false);
     }
@@ -86,23 +113,30 @@ function Landing() {
 
         <div className="mt-8 rounded-2xl border bg-card p-4 shadow-sm md:p-6">
           <label className="text-left block text-sm font-semibold text-foreground">
-            Walmart URL, UPC / GTIN, or item ID
+            Walmart URL, UPC / GTIN, item ID, or product keyword
             <span className="text-primary"> *</span>
           </label>
           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
             <Input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="walmart.com/ip/... · UPC (12-14 digits) · item ID"
+              placeholder="walmart.com/ip/... · UPC · item ID · brand + model"
               className="h-12 rounded-xl text-base"
             />
             <Button onClick={onScan} disabled={loading || !url} size="lg" className="h-12 rounded-xl">
               {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
-              Analyze Product
+              Find product
             </Button>
           </div>
-          <p className="mt-2 text-xs text-muted-foreground text-left">Only walmart.com URLs are supported.</p>
+          <p className="mt-2 text-xs text-muted-foreground text-left">URLs and item IDs are analyzed directly. UPCs and keywords return candidate matches to pick from.</p>
         </div>
+
+        {candidates !== null && (
+          <div className="mt-6 text-left">
+            {searchWarn && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">{searchWarn}</div>}
+            <SearchResults candidates={candidates} onSelect={(c) => c.url && runAnalyze(c.url)} loading={loading} />
+          </div>
+        )}
 
         <div className="mt-10 grid gap-3 text-left md:grid-cols-3">
           {[

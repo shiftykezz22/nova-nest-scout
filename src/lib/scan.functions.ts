@@ -13,6 +13,7 @@ type Retrieval = {
   fields_recovered: number;
   fields_missing: string[];
   provider?: string;
+  stages?: Array<{ name: string; status: "ok" | "skipped" | "error"; note?: string }>;
 };
 
 const ANTIBOT_RX = /robot or human\?|are you a human|verify you are human|unusual traffic|access denied|captcha|px-captcha|perimeterx|please enable javascript and cookies|blocked by/i;
@@ -105,11 +106,24 @@ async function fetchSerpApiProduct(itemId: string): Promise<{ product: Partial<P
     const brand = p.brand || p.manufacturer;
     if (brand) { out.brand = String(brand); out.sources!.brand = "verified"; }
 
-    const upc = p.upc || p.gtin || p.gtin13 || p.upc_a;
+    if (p.manufacturer) { out.manufacturer = String(p.manufacturer); out.sources!.manufacturer = "verified"; }
+
+    const upc = p.upc || p.gtin13 || p.upc_a;
     if (upc) { out.upc_gtin = String(upc); out.sources!.upc_gtin = "verified"; }
+    if (p.gtin || p.gtin14) { out.gtin = String(p.gtin || p.gtin14); out.sources!.gtin = "verified"; }
+    if (p.ean || p.ean13) { out.ean = String(p.ean || p.ean13); out.sources!.ean = "verified"; }
 
     const model = p.model || p.model_number;
     if (model) { out.model = String(model); out.sources!.model = "verified"; }
+    const mpn = p.manufacturer_part_number || p.mpn || p.part_number;
+    if (mpn) { out.manufacturer_part_number = String(mpn); out.sources!.manufacturer_part_number = "verified"; }
+    if (p.sku) { out.sku = String(p.sku); out.sources!.sku = "verified"; }
+    if (p.color) { out.color = String(p.color); out.sources!.color = "verified"; }
+    if (p.size) { out.size = String(p.size); out.sources!.size = "verified"; }
+    const pack = p.pack_size || p.pack_quantity || p.count_per_pack;
+    if (pack) { out.pack_quantity = String(pack); out.sources!.pack_quantity = "verified"; }
+    if (p.condition) { out.condition = String(p.condition); out.sources!.condition = "verified"; }
+    if (p.variation || p.variant_name) { out.variation = String(p.variation || p.variant_name); out.sources!.variation = "verified"; }
 
     // Price: SerpApi walmart_product exposes price under several shapes
     const priceCandidates: unknown[] = [
@@ -374,7 +388,7 @@ async function resolveAndFetch(rawInput: string): Promise<{
   } else if (id.kind === "item_id") {
     normalizedUrl = id.url;
     itemId = id.itemId;
-  } else {
+  } else if (id.kind === "upc") {
     upc = id.upc;
     const resolved = await resolveUpcToWalmartUrl(id.upc);
     if (!resolved.url) {
@@ -399,6 +413,10 @@ async function resolveAndFetch(rawInput: string): Promise<{
     }
     normalizedUrl = resolved.url;
     itemId = resolved.itemId;
+  } else {
+    // "query" kind should be routed through searchWalmartMatches; if it lands
+    // here (legacy caller), fall back to a Walmart search page with no data.
+    throw new Error("Keyword search must go through product picker.");
   }
 
   const sourcesTried: string[] = ["walmart"];
@@ -468,10 +486,21 @@ export const analyzeProduct = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const raw = (data.input ?? data.url ?? "").trim();
     if (!raw) throw new Error("Enter a Walmart URL, UPC / GTIN, or item ID.");
+    const started = Date.now();
     const { normalizedUrl, itemId, product, retrieval } = await resolveAndFetch(raw);
+    // Build a real stages array reflecting what actually ran.
+    const stages: NonNullable<ProductData["retrieval"]>["stages"] = [
+      { name: "Identify input", status: "ok" },
+      { name: "Retrieve Walmart data", status: retrieval.walmart_status === "ok" ? "ok" : retrieval.walmart_status === "blocked" ? "error" : "skipped", note: retrieval.walmart_reason },
+      { name: "SerpApi verification", status: retrieval.sources_tried.includes("serpapi") ? (retrieval.provider === "serpapi" ? "ok" : "error") : "skipped" },
+      { name: "Tavily fallback", status: retrieval.tavily_used ? "ok" : "skipped", note: retrieval.tavily_used ? `${retrieval.fields_recovered} fields recovered` : undefined },
+      { name: "Build verdict", status: product.title && product.price != null ? "ok" : "skipped" },
+    ];
+    retrieval.stages = stages;
     const status = product.title ? "retrieved" : "manual_required";
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (product as any).retrieval = retrieval;
+    product.scanned_at = new Date().toISOString();
     const { data: row, error } = await context.supabase
       .from("product_scans")
       .insert({
@@ -488,7 +517,112 @@ export const analyzeProduct = createServerFn({ method: "POST" })
       .select("id")
       .single();
     if (error) throw new Error(error.message);
+    // Log scan_sources per provider (best-effort; RLS scopes via product_scans owner).
+    const scanSources = retrieval.sources_tried.map((p) => ({
+      scan_id: row.id,
+      provider_name: p,
+      request_type: p === "walmart" ? "html" : "api",
+      request_status: (p === "serpapi" && retrieval.provider === "serpapi") || (p === "walmart" && retrieval.walmart_status === "ok") || (p === "tavily" && retrieval.tavily_used) ? "ok" : "skipped",
+      source_url: p === "walmart" ? normalizedUrl : null,
+      records_returned: p === "tavily" ? retrieval.fields_recovered : (retrieval.provider === p ? 1 : 0),
+      latency_ms: Date.now() - started,
+      completed_at: new Date().toISOString(),
+    }));
+    if (scanSources.length) {
+      await context.supabase.from("scan_sources").insert(scanSources);
+    }
+    // Log observations for each core field with a source, so the Sources panel has data.
+    type ObsRow = { scan_id: string; field_name: string; raw_value: string; normalized_value: string; source_name: string; source_url: string | null; verification_status: string; confidence: number; is_selected_value: boolean };
+    const obs: ObsRow[] = [];
+    for (const [k, src] of Object.entries(product.sources ?? {})) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const v = (product as any)[k];
+      if (v == null || v === "") continue;
+      obs.push({
+        scan_id: row.id,
+        field_name: k,
+        raw_value: String(v).slice(0, 500),
+        normalized_value: String(v).slice(0, 500),
+        source_name: retrieval.provider || "walmart_html",
+        source_url: normalizedUrl,
+        verification_status: src === "verified" ? "verified" : src === "public" ? "single_source" : src === "user" ? "user_entered" : src === "estimated" ? "estimated" : "unavailable",
+        confidence: src === "verified" ? 90 : src === "public" ? 70 : src === "user" ? 100 : src === "estimated" ? 40 : 0,
+        is_selected_value: true,
+      });
+    }
+    if (obs.length) await context.supabase.from("product_observations").insert(obs);
     return { id: row.id, status, product, retrieval };
+  });
+
+// Search up to 5 Walmart product candidates matching the input.
+// Uses SerpApi walmart search engine (or walmart_product for a direct id).
+export const searchWalmartMatches = createServerFn({ method: "POST" })
+  .inputValidator((data: { input?: string }) => data)
+  .handler(async ({ data }) => {
+    const raw = (data.input ?? "").trim();
+    if (!raw) throw new Error("Enter a search term.");
+    const id = identifyInput(raw);
+    if (!id.ok) throw new Error(id.error);
+    // Direct product lookup — return 1 candidate immediately.
+    if (id.kind === "url" || id.kind === "item_id") {
+      const itemId = id.kind === "url" ? id.itemId : id.itemId;
+      if (itemId) {
+        const s = await fetchSerpApiProduct(itemId);
+        if (s.ok && s.product.title) {
+          return { kind: "direct" as const, itemId, url: id.kind === "url" ? id.url : `https://www.walmart.com/ip/${itemId}` };
+        }
+      }
+      return { kind: "direct" as const, itemId, url: id.kind === "url" ? id.url : `https://www.walmart.com/ip/${itemId}` };
+    }
+    // Keyword or UPC — SerpApi walmart search engine.
+    const key = process.env.SERPAPI_API_KEY || process.env.SERP_API_KEY;
+    const query = id.kind === "upc" ? id.upc : id.query;
+    if (!key) {
+      return { kind: "candidates" as const, candidates: [], warning: "Product search is unavailable — API key is not configured. Try a Walmart URL or item ID." };
+    }
+    try {
+      const params = new URLSearchParams({ engine: "walmart", query, api_key: key });
+      const res = await fetch(`https://serpapi.com/search.json?${params.toString()}`, { signal: AbortSignal.timeout(15000) });
+      if (!res.ok) return { kind: "candidates" as const, candidates: [], warning: `Search failed (${res.status}). Try again shortly.` };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const j: any = await res.json();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rows: any[] = j.organic_results || j.products || [];
+      const candidates = rows.slice(0, 5).map((r) => {
+        const itemId = String(r.us_item_id || r.product_id || r.item_id || "").match(/\d{5,}/)?.[0];
+        const price = pickNum(r?.primary_offer?.offer_price ?? r.price ?? r?.price?.price);
+        const rating = pickNum(r.rating);
+        const reviews = pickInt(r.reviews ?? r.reviews_count);
+        const seller = r.seller_name || r.seller?.name || r.marketplace_seller;
+        // Match confidence: exact UPC bonus, title match bonus.
+        const titleLc = String(r.title || "").toLowerCase();
+        const qLc = query.toLowerCase();
+        let match = 40;
+        const reasons: string[] = [];
+        if (id.kind === "upc" && String(r.upc || r.gtin || "").includes(id.upc)) { match = 100; reasons.push("UPC matched"); }
+        else if (qLc.split(/\s+/).every((t) => titleLc.includes(t))) { match = 75; reasons.push("All keywords in title"); }
+        else if (qLc.split(/\s+/).some((t) => t.length > 2 && titleLc.includes(t))) { match = 55; reasons.push("Partial keyword match"); }
+        if (r.brand) reasons.push(`Brand: ${r.brand}`);
+        return {
+          walmart_item_id: itemId,
+          url: r.product_page_url || r.link || (itemId ? `https://www.walmart.com/ip/${itemId}` : undefined),
+          title: r.title as string | undefined,
+          brand: r.brand as string | undefined,
+          image: (typeof r.thumbnail === "string" ? r.thumbnail : (typeof r.image === "string" ? r.image : undefined)) as string | undefined,
+          price,
+          rating,
+          review_count: reviews,
+          seller: seller ? String(seller) : undefined,
+          model: r.model as string | undefined,
+          upc_gtin: r.upc || r.gtin ? String(r.upc || r.gtin) : undefined,
+          match_confidence: match,
+          match_reasons: reasons,
+        };
+      }).filter((c) => c.walmart_item_id);
+      return { kind: "candidates" as const, candidates };
+    } catch {
+      return { kind: "candidates" as const, candidates: [], warning: "Search timed out. Try a more specific term or a Walmart URL." };
+    }
   });
 
 export const analyzeProductGuest = createServerFn({ method: "POST" })

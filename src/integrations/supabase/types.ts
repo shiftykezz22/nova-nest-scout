@@ -62,6 +62,62 @@ export type Database = {
         }
         Relationships: []
       }
+      product_observations: {
+        Row: {
+          confidence: number
+          created_at: string
+          field_name: string
+          id: string
+          is_selected_value: boolean
+          metadata: Json
+          normalized_value: string | null
+          raw_value: string | null
+          retrieved_at: string
+          scan_id: string
+          source_name: string
+          source_url: string | null
+          verification_status: string
+        }
+        Insert: {
+          confidence?: number
+          created_at?: string
+          field_name: string
+          id?: string
+          is_selected_value?: boolean
+          metadata?: Json
+          normalized_value?: string | null
+          raw_value?: string | null
+          retrieved_at?: string
+          scan_id: string
+          source_name: string
+          source_url?: string | null
+          verification_status: string
+        }
+        Update: {
+          confidence?: number
+          created_at?: string
+          field_name?: string
+          id?: string
+          is_selected_value?: boolean
+          metadata?: Json
+          normalized_value?: string | null
+          raw_value?: string | null
+          retrieved_at?: string
+          scan_id?: string
+          source_name?: string
+          source_url?: string | null
+          verification_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_observations_scan_id_fkey"
+            columns: ["scan_id"]
+            isOneToOne: false
+            referencedRelation: "product_scans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       product_scans: {
         Row: {
           analysis_status: string
@@ -157,6 +213,59 @@ export type Database = {
           {
             foreignKeyName: "saved_products_product_scan_id_fkey"
             columns: ["product_scan_id"]
+            isOneToOne: false
+            referencedRelation: "product_scans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      scan_sources: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          error_message: string | null
+          id: string
+          latency_ms: number | null
+          provider_name: string
+          records_returned: number | null
+          request_status: string
+          request_type: string
+          requested_at: string
+          scan_id: string
+          source_url: string | null
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          latency_ms?: number | null
+          provider_name: string
+          records_returned?: number | null
+          request_status: string
+          request_type: string
+          requested_at?: string
+          scan_id: string
+          source_url?: string | null
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          latency_ms?: number | null
+          provider_name?: string
+          records_returned?: number | null
+          request_status?: string
+          request_type?: string
+          requested_at?: string
+          scan_id?: string
+          source_url?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scan_sources_scan_id_fkey"
+            columns: ["scan_id"]
             isOneToOne: false
             referencedRelation: "product_scans"
             referencedColumns: ["id"]
