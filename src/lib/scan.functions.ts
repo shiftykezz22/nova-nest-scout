@@ -788,9 +788,9 @@ export const analyzeProduct = createServerFn({ method: "POST" })
       const v = (product as any)[k];
       if (v == null || v === "") continue;
       const upgrade = upgradedFields.get(k);
-      const baseStatus = src === "verified" ? "verified" : src === "public" ? "single_source" : src === "user" ? "user_entered" : src === "estimated" ? "estimated" : "unavailable";
+      const baseStatus = src === "verified" ? "verified" : src === "public" ? "single_source" : src === "user" ? "user_entered" : src === "estimated" ? "estimated" : src === "inferred" ? "inferred" : "unavailable";
       const finalStatus = upgrade?.status ?? baseStatus;
-      const confidence = finalStatus === "cross_checked" ? 95 : finalStatus === "verified" ? 90 : finalStatus === "user_entered" ? 100 : finalStatus === "single_source" ? 70 : finalStatus === "estimated" ? 40 : 0;
+      const confidence = finalStatus === "cross_checked" ? 95 : finalStatus === "verified" ? 90 : finalStatus === "user_entered" ? 100 : finalStatus === "single_source" ? 70 : finalStatus === "inferred" ? 60 : finalStatus === "estimated" ? 40 : 0;
       obs.push({
         scan_id: row.id,
         field_name: k,
