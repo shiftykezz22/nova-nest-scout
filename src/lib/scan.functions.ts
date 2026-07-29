@@ -796,7 +796,7 @@ export const analyzeProduct = createServerFn({ method: "POST" })
         field_name: k,
         raw_value: String(v).slice(0, 500),
         normalized_value: String(v).slice(0, 500),
-        source_name: retrieval.provider || "walmart_html",
+        source_name: product.source_names?.[k] || retrieval.provider || "walmart_html",
         source_url: normalizedUrl,
         verification_status: finalStatus,
         confidence,
