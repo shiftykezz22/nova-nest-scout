@@ -5,6 +5,7 @@ import { identifyInput } from "./walmart";
 import { productFingerprint, classifyMatch } from "./matching";
 import { extractSpecs, extractModelFromText, stripHtml, extractCategoryPath } from "./serpapi-spec-extract";
 import { synthesizeCategoryPath, formatCategoryPath } from "./category-map";
+import { runEnrichment, type EnrichmentResult } from "./enrichment";
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -17,6 +18,7 @@ type Retrieval = {
   fields_missing: string[];
   provider?: string;
   stages?: Array<{ name: string; status: "ok" | "skipped" | "error"; note?: string }>;
+  enrichment?: EnrichmentResult;
 };
 
 const ANTIBOT_RX = /robot or human\?|are you a human|verify you are human|unusual traffic|access denied|captcha|px-captcha|perimeterx|please enable javascript and cookies|blocked by/i;
