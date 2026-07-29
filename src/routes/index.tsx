@@ -9,6 +9,7 @@ import { analyzeProductGuest, searchWalmartMatches } from "@/lib/scan.functions"
 import { identifyInput } from "@/lib/walmart";
 import { saveGuestScan, guestUsed } from "@/lib/guest";
 import { SearchResults, type Candidate } from "@/components/SearchResults";
+import { useAuth } from "@/hooks/useAuth";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -24,6 +25,7 @@ export const Route = createFileRoute("/")({
 
 function Landing() {
   const router = useRouter();
+  const { session } = useAuth();
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
@@ -32,7 +34,7 @@ function Landing() {
   const search = useServerFn(searchWalmartMatches);
 
   async function runAnalyze(input: string) {
-    if (guestUsed()) {
+    if (!session && guestUsed()) {
       toast.error("Free guest scan used. Sign up for unlimited scans.");
       router.navigate({ to: "/auth", search: { mode: "signup" } as never });
       return;
