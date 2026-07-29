@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
-import { analyzeProductGuest, searchWalmartMatches } from "@/lib/scan.functions";
+import { analyzeProductGuest, analyzeProduct, searchWalmartMatches } from "@/lib/scan.functions";
 import { identifyInput } from "@/lib/walmart";
 import { saveGuestScan, guestUsed } from "@/lib/guest";
 import { SearchResults, type Candidate } from "@/components/SearchResults";
@@ -31,6 +31,7 @@ function Landing() {
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [searchWarn, setSearchWarn] = useState<string | null>(null);
   const analyze = useServerFn(analyzeProductGuest);
+  const analyzeAuth = useServerFn(analyzeProduct);
   const search = useServerFn(searchWalmartMatches);
 
   async function runAnalyze(input: string) {
@@ -41,6 +42,11 @@ function Landing() {
     }
     setLoading(true);
     try {
+      if (session) {
+        const res = await analyzeAuth({ data: { input } });
+        router.navigate({ to: "/scans/$id", params: { id: res.id } });
+        return;
+      }
       const res = await analyze({ data: { input } });
       const scanId = crypto.randomUUID();
       saveGuestScan({
