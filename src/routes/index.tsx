@@ -159,6 +159,8 @@ function Landing() {
         <div className="mt-10 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
           <Link to="/glossary" className="hover:text-primary">Glossary</Link>
           <span>·</span>
+          <Link to="/compare" className="hover:text-primary">Compare</Link>
+          <span>·</span>
           <Link to="/privacy" className="hover:text-primary">Privacy</Link>
           <span>·</span>
           <Link to="/terms" className="hover:text-primary">Terms</Link>
