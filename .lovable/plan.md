@@ -1,66 +1,49 @@
-## Execution plan for Phase 2 follow-up
+## Scope
 
-I'm in plan mode, so I'll lay out the exact order, then run it end-to-end once you approve.
+Two parts. Part 1 (bath towel profit scan) is a live research task — the app itself is the tool that produces those numbers from real Walmart data. I can't fabricate a market snapshot from thin air without running scans against SerpAPI/BlueCart for real 6-piece towel listings, and doing that inside this plan turn would just be invented numbers. I'll wire up part 2 and, once built, we can point the new comparison flow (plus the existing scanner) at 3–5 real 6-piece towel URLs to produce the profit scan with actual data.
 
-One blocker up front: **`BLUECART_API_KEY` is not in the project secrets** (confirmed via `fetch_secrets` — only `LOVABLE_API_KEY`, `SERPAPI_API_KEY`, `SERP_API_KEY`, `TAVILY_API_KEY`, `TAV_API_KEY` exist). BlueCart is a third-party API — I cannot mint or guess it. It has to come from you via the secure secret form.
+Part 2 is a concrete build: an Amazon vs Walmart side-by-side comparison feature.
 
-### Step 1 — Load the BlueCart API key
-- Call `add_secret` for `BLUECART_API_KEY` (format hint: BlueCart keys are lowercase hex, ~40 chars, from `app.bluecartapi.com/manage-account`). You paste it into the secure form; the value never touches chat.
-- Verify with `fetch_secrets` that the name now appears.
-- The client already reads `process.env.BLUECART_API_KEY` (`src/lib/bluecart.ts:36-38`) and `isBlueCartConfigured()` reflects presence — no code change needed to "authenticate" beyond having the key.
-- Ping-test with a bare `curl https://api.bluecartapi.com/request?api_key=…&type=product&item_id=774459101` inside a temporary server function, log status, and confirm 200.
+## Part 2 — Amazon vs Walmart Comparison
 
-### Step 2 — Run Phase 2 fixtures against the BlueCart path
-Since BlueCart runs inside the enrichment orchestrator, I'll drive it through the real pipeline via `stack_modern--invoke-server-function` against `analyzeProductGuest`, then read `product_scans` rows for the persisted result. Fixtures:
+### New route
+`src/routes/compare.tsx` (public, guest-accessible like `/guest-result`). Mobile-first, matches existing red/white/charcoal shell. Adds a nav entry in `__root.tsx`.
 
-| # | Input | Path exercised | Pass condition |
-|---|-------|----------------|----------------|
-| 1 | `13063753535` (item id, previously bot-blocked) | UPC lookup after Tavily UPC discovery → ItemId fallback | BlueCart returns candidate, model/mpn filled if real |
-| 2 | Dove Beauty Bar `10450115` | UPC → title+brand (Jaccard ≥ 0.55) | fills or returns `bluecart_title_low_similarity`, no hallucination |
-| 3 | Logitech G305 `774459101` | Phase 1 already complete → enrichment gate SHOULD NOT trigger | no BlueCart call made, values untouched |
-| 4 | Great Value item (private label, no MPN in the world) | full BlueCart chain runs, returns nothing verifiable | model/mpn stay null, no LLM hallucination |
-| 5 | A previously-empty branded item (e.g. `931573527` or one you name) | UPC → title | BlueCart or LLM fills real values |
+### UI flow
+1. **Walmart side**: paste a Walmart URL / UPC / item ID → runs existing `resolveAndFetch` pipeline (SerpAPI → BlueCart enrichment already in place). Reuses `ProductHero`-style card.
+2. **Amazon side**: two input modes in a tabbed panel:
+   - **Manual entry** (default, always works): price, rating, review count, image URL, title, ASIN — small form.
+   - **Auto-fetch** (disabled placeholder with tooltip "Free tier — coming soon"): wired to `src/lib/amazon.ts` so real data drops in later without UI changes.
+3. **Comparison summary card** below both: price delta, rating delta, review-count delta, and a "Better value on Walmart / Amazon / Tie" verdict using a simple rule (lower price wins unless rating gap > 0.5 stars with 50+ reviews).
+4. **Banner**: "Amazon data currently limited — free tier / manual mode active."
 
-For each: capture stage log entries (`[enrichment]`, `[bluecart] status`, `[llm.gateway]`) and the resulting `product.sources` / `product.source_names` maps. Failures print the exact `reason` string returned by the client (`bluecart_missing_key`, `bluecart_http_4xx`, `bluecart_title_low_similarity`, etc.).
+### New files
+- `src/lib/amazon.ts` — typed `AmazonProduct` + `fetchAmazonProduct(input)` service layer. Returns `{ ok: false, reason: "manual_only" }` today; shape ready for Keepa/Rainforest/etc. Includes ASIN extraction from `amazon.com/dp/XXXX` and `/gp/product/XXXX` URLs.
+- `src/lib/compare.ts` — pure comparison logic: `compareOffers(walmart, amazon) → { winner, priceDelta, ratingDelta, reviewsDelta, rationale }`. Unit-testable, no I/O.
+- `src/components/CompareCard.tsx` — one side (image, title, price, rating, reviews, "source" badge). Reused for both retailers.
+- `src/components/CompareSummary.tsx` — the "Better value on…" card.
+- `src/routes/compare.tsx` — route wiring, state, head() metadata, banner.
 
-### Step 3 — Verify source tracking
-For each fixture, run `supabase--read_query` on `product_scans` and `product_observations`:
-```sql
-select field_name, status, source_name, confidence
-from product_observations
-where scan_id = '<id>'
-order by field_name;
-```
-Assert every enriched field has `source_name ∈ {'serpapi.walmart_product', 'bluecart', 'llm.gateway', 'serpapi.reviews', 'tavily.search', ...}` and status matches:
-- `bluecart` matched by UPC → `cross_checked` (95) when Phase 1 already had the field, `single_source` (70) otherwise.
-- `llm.gateway` → `inferred` (60).
-- Untouched Phase 1 fields → whatever status they had before.
+### Reused, not rebuilt
+- Walmart fetch: existing `scan.functions.ts` `resolveAndFetch` (already uses SerpAPI + BlueCart via `enrichment.ts`).
+- Styling: existing tokens in `styles.css`, shadcn components (`Card`, `Input`, `Button`, `Badge`, `Tabs`).
+- Guest gating: not applied — comparison is free-tier feature, no scan-quota consumption on the Amazon side (Walmart side still counts against existing guest scan if user is a guest).
 
-Fail the step if any enriched field has `source_name = null` or if a `verified`/`user` field was rewritten.
+### Explicitly out of scope for this pass
+- Real Amazon data provider integration (structure prepared, no credentials wired).
+- Persisting comparisons to the database.
+- Multi-product comparison / history.
+- Automatic Amazon lookup from a Walmart product (would need identifier reconciliation across marketplaces; deferred).
 
-### Step 4 — Before/after diff
-For fixtures 1, 2, 5 (the ones where enrichment should actually fire), print two JSON blocks side-by-side per product:
+### Technical notes
+- `amazon.ts` deliberately does NOT read `process.env` yet; when a provider is picked, it'll live behind a `createServerFn` so keys stay server-side (same pattern as SerpAPI/BlueCart).
+- `compareOffers` is a pure function to keep the "Better value" rule easy to iterate.
+- No DB migration needed.
 
-```
-BEFORE (Phase 1 output — captured by re-running with BLUECART_API_KEY temporarily unset via a feature flag on the enrichment stage):
-{ title, brand, manufacturer, model, mpn, category_path, confidence, data_completeness_score, sources }
+## Follow-up after build
 
-AFTER (Phase 1 + Phase 2):
-{ …same keys… }
+Once the comparison route is live, I'll run 3–5 real 6-piece bath towel scans through the existing scanner and the new compare page to produce the actual Part 1 profit scan with real prices, ratings, and margin math — instead of guessing.
 
-DELTA:
-- fields filled: [...]
-- source_names added: {...}
-- confidence: X → Y
-```
+## Open question
 
-Summary table: fixture, fields filled, provider that filled each, confidence delta, any hallucination flags.
-
-### Reporting format
-For each step: `✅ PASS` / `❌ FAIL — <error> — <file:line>`. If any step fails, stop and surface the raw output.
-
-### Assumption I need to state up front
-"Use the project's existing secrets/env pattern" — the project uses Lovable managed secrets (see `.env` for public keys only; server secrets live in the platform vault). `add_secret` is that pattern. If you meant something else (e.g. you already pasted the key into a specific file or want me to `set_secret` a value you name in chat), tell me before I approve.
-
-### Question before build mode
-Do you have the BlueCart API key ready to paste into the `add_secret` form? If not, I'll pause after opening the form and won't run Steps 2–4 until the secret shows up in `fetch_secrets`.
+For the "Better value" rule, is the current heuristic (lower price wins unless rating advantage ≥ 0.5 stars with 50+ reviews) fine, or do you want price-only? I'll default to the heuristic unless you say otherwise.
