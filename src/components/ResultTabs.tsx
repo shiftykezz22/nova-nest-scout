@@ -20,6 +20,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { listObservations, refreshScan } from "@/lib/scan.functions";
 import { calculate } from "@/lib/calc";
 import { evaluate } from "@/lib/verdict";
+import { estimateUnitCost } from "@/lib/estimate-cost";
 
 type Props = {
   product: ProductData;
@@ -75,12 +76,17 @@ export function ResultTabs({ product, onProductChange, scanId, initialSuppliers,
     returnAllowancePercent: settings?.returnAllowancePercent ?? DEFAULTS.returnAllowancePercent,
   }), [settings]);
 
-  const calcInputs = useMemo(() => buildCalcInputs(product, overrides, base), [product, overrides, base]);
+  const estimate = useMemo(() => estimateUnitCost(product), [product]);
+  const calcInputs = useMemo(() => buildCalcInputs(product, overrides, base, estimate.unitCost), [product, overrides, base, estimate.unitCost]);
   const calc = useMemo(() => calculate(calcInputs), [calcInputs]);
   const canCalc = (product.price ?? 0) > 0 && (calcInputs.unitCost ?? 0) > 0;
+  const costEstimated = (product.price ?? 0) > 0
+    && overrides.supplierUnitCost == null
+    && (product.unit_cost == null || product.unit_cost === 0)
+    && estimate.unitCost > 0;
   const verdict = useMemo(
-    () => evaluate(product, calc, !!selected && (selected.product_match !== "weak" || product.sources?.unit_cost === "user")),
-    [product, calc, selected],
+    () => evaluate(product, calc, !!selected && (selected.product_match !== "weak" || product.sources?.unit_cost === "user"), { costEstimated, estimateConfidence: estimate.confidence }),
+    [product, calc, selected, costEstimated, estimate.confidence],
   );
   const retrieval = product.retrieval;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -159,7 +165,7 @@ export function ResultTabs({ product, onProductChange, scanId, initialSuppliers,
         </TabsContent>
 
         <TabsContent value="profit" className="mt-4 space-y-4">
-          <ProfitabilityPanel product={product} overrides={overrides} onChange={setOverrides} baseInputs={base} />
+          <ProfitabilityPanel product={product} overrides={overrides} onChange={setOverrides} baseInputs={base} estimate={estimate} />
           <div className="rounded-2xl border bg-card p-4 md:p-6">
             <div className="mb-2 text-sm font-semibold">What these numbers mean</div>
             <dl className="grid gap-3 text-xs sm:grid-cols-2">

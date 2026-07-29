@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import type { ProductData } from "@/lib/walmart";
 import { calculate, usd, type CalcInputs, type CalcResult } from "@/lib/calc";
+import type { CostEstimate } from "@/lib/estimate-cost";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetFooter, SheetClose } from "@/components/ui/sheet";
-import { AlertTriangle, Pencil } from "lucide-react";
+import { AlertTriangle, Pencil, Sparkles } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 export type CostOverrides = {
   supplierUnitCost?: number;
@@ -23,9 +25,10 @@ type Props = {
   overrides: CostOverrides;
   onChange: (next: CostOverrides) => void;
   baseInputs: Omit<CalcInputs, "sellingPrice" | "unitCost">;
+  estimate?: CostEstimate | null;
 };
 
-export function buildCalcInputs(product: ProductData, overrides: CostOverrides, base: Omit<CalcInputs, "sellingPrice" | "unitCost">): CalcInputs {
+export function buildCalcInputs(product: ProductData, overrides: CostOverrides, base: Omit<CalcInputs, "sellingPrice" | "unitCost">, estimateUnitCost?: number): CalcInputs {
   const qty = Math.max(1, Math.floor(overrides.quantity ?? 20));
   const shippingPerUnit = overrides.totalSupplierShipping != null
     ? overrides.totalSupplierShipping / qty
@@ -33,9 +36,10 @@ export function buildCalcInputs(product: ProductData, overrides: CostOverrides, 
   const referralPercent = overrides.referralFlat != null && (product.price ?? 0) > 0
     ? (overrides.referralFlat / (product.price as number)) * 100
     : overrides.referralPercent ?? base.referralFeePercent;
+  const unitCost = overrides.supplierUnitCost ?? product.unit_cost ?? estimateUnitCost ?? 0;
   return {
     sellingPrice: product.price ?? 0,
-    unitCost: overrides.supplierUnitCost ?? product.unit_cost ?? 0,
+    unitCost,
     shippingPerUnit,
     dutiesPerUnit: overrides.dutiesPerUnit ?? base.dutiesPerUnit,
     prepCostPerUnit: overrides.prepPerUnit ?? base.prepCostPerUnit,
@@ -49,13 +53,21 @@ export function buildCalcInputs(product: ProductData, overrides: CostOverrides, 
   };
 }
 
-export function ProfitabilityPanel({ product, overrides, onChange, baseInputs }: Props) {
+export function ProfitabilityPanel({ product, overrides, onChange, baseInputs, estimate }: Props) {
   const [open, setOpen] = useState(false);
-  const inputs = useMemo(() => buildCalcInputs(product, overrides, baseInputs), [product, overrides, baseInputs]);
+  const inputs = useMemo(() => buildCalcInputs(product, overrides, baseInputs, estimate?.unitCost), [product, overrides, baseInputs, estimate?.unitCost]);
   const calc = useMemo(() => calculate(inputs), [inputs]);
   const hasPrice = (product.price ?? 0) > 0;
   const hasCost = (inputs.unitCost ?? 0) > 0;
+  const usingEstimate = hasCost
+    && overrides.supplierUnitCost == null
+    && (product.unit_cost == null || product.unit_cost === 0)
+    && !!estimate && estimate.unitCost > 0;
   const otherPerUnit = overrides.otherPerUnit ?? 0;
+  const EstBadge = () =>
+    usingEstimate ? (
+      <Badge variant="outline" className="ml-1 border-amber-300 bg-amber-50 text-[9px] uppercase text-amber-800">Est.</Badge>
+    ) : null;
 
   return (
     <section className="rounded-2xl border bg-card p-4 md:p-6">
@@ -65,7 +77,8 @@ export function ProfitabilityPanel({ product, overrides, onChange, baseInputs }:
           <p className="text-xs text-muted-foreground">
             {!hasPrice && "Walmart selling price is missing — cost data required to calculate."}
             {hasPrice && !hasCost && "Add a supplier unit cost to unlock profit, margin, ROI and break-even."}
-            {hasPrice && hasCost && "Live values based on your entered costs. Change anything to recalculate instantly."}
+            {hasPrice && hasCost && !usingEstimate && "Live values based on your entered costs. Change anything to recalculate instantly."}
+            {hasPrice && hasCost && usingEstimate && "Live values using an automatic cost estimate — enter a real supplier quote to sharpen the numbers."}
           </p>
         </div>
         <Sheet open={open} onOpenChange={setOpen}>
@@ -86,27 +99,37 @@ export function ProfitabilityPanel({ product, overrides, onChange, baseInputs }:
         </div>
       )}
 
+      {usingEstimate && estimate && (
+        <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <div>
+            <div className="font-semibold">Cost is estimated ({estimate.confidence} confidence)</div>
+            <div className="mt-0.5 opacity-90">{estimate.rationale} Enter a real supplier quote via "Enter or edit costs" to lock in the numbers.</div>
+          </div>
+        </div>
+      )}
+
       <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
-        <Card label="Supplier unit cost" value={hasCost ? usd(inputs.unitCost) : "Cost data required"} pending={!hasCost} />
+        <Card label={<>Supplier unit cost<EstBadge /></>} value={hasCost ? usd(inputs.unitCost) : "Cost data required"} pending={!hasCost} />
         <Card label="Shipping / unit" value={hasCost ? usd(inputs.shippingPerUnit) : "—"} />
         <Card label="Prep / packaging" value={usd(inputs.prepCostPerUnit)} />
         <Card label="Walmart referral fee" value={hasPrice ? usd(calc.referralFee) : "—"} pending={!hasPrice} sub={`${inputs.referralFeePercent.toFixed(1)}%`} />
         <Card label="Other costs / unit" value={usd(otherPerUnit + inputs.dutiesPerUnit)} />
-        <Card label="Landed cost" value={hasCost ? usd(calc.landedCost + otherPerUnit) : "Cost data required"} pending={!hasCost} strong />
-        <Card label="Profit / unit" value={hasPrice && hasCost ? usd(calc.estimatedProfit - otherPerUnit) : "Cost data required"} pending={!hasPrice || !hasCost} tone={hasPrice && hasCost ? ((calc.estimatedProfit - otherPerUnit) >= 0 ? "good" : "bad") : undefined} strong />
-        <Card label="Margin" value={hasPrice && hasCost ? `${((calc.estimatedProfit - otherPerUnit) / (product.price ?? 1) * 100).toFixed(1)}%` : "—"} pending={!hasPrice || !hasCost} />
-        <Card label="ROI" value={hasPrice && hasCost && (calc.landedCost + otherPerUnit) > 0 ? `${((calc.estimatedProfit - otherPerUnit) / (calc.landedCost + otherPerUnit) * 100).toFixed(0)}%` : "—"} pending={!hasPrice || !hasCost} />
-        <Card label="Break-even price" value={hasCost ? usd(calc.breakEvenPrice + otherPerUnit) : "Cost data required"} pending={!hasCost} />
+        <Card label={<>Landed cost<EstBadge /></>} value={hasCost ? usd(calc.landedCost + otherPerUnit) : "Cost data required"} pending={!hasCost} strong />
+        <Card label={<>Profit / unit<EstBadge /></>} value={hasPrice && hasCost ? usd(calc.estimatedProfit - otherPerUnit) : "Cost data required"} pending={!hasPrice || !hasCost} tone={hasPrice && hasCost ? ((calc.estimatedProfit - otherPerUnit) >= 0 ? "good" : "bad") : undefined} strong />
+        <Card label={<>Margin<EstBadge /></>} value={hasPrice && hasCost ? `${((calc.estimatedProfit - otherPerUnit) / (product.price ?? 1) * 100).toFixed(1)}%` : "—"} pending={!hasPrice || !hasCost} />
+        <Card label={<>ROI<EstBadge /></>} value={hasPrice && hasCost && (calc.landedCost + otherPerUnit) > 0 ? `${((calc.estimatedProfit - otherPerUnit) / (calc.landedCost + otherPerUnit) * 100).toFixed(0)}%` : "—"} pending={!hasPrice || !hasCost} />
+        <Card label={<>Break-even price<EstBadge /></>} value={hasCost ? usd(calc.breakEvenPrice + otherPerUnit) : "Cost data required"} pending={!hasCost} />
       </div>
     </section>
   );
 }
 
-function Card({ label, value, sub, pending, tone, strong }: { label: string; value: string; sub?: string; pending?: boolean; tone?: "good" | "bad"; strong?: boolean }) {
+function Card({ label, value, sub, pending, tone, strong }: { label: React.ReactNode; value: string; sub?: string; pending?: boolean; tone?: "good" | "bad"; strong?: boolean }) {
   const color = pending ? "text-muted-foreground" : tone === "good" ? "text-emerald-700" : tone === "bad" ? "text-red-700" : "text-foreground";
   return (
     <div className={`rounded-lg border p-3 ${strong ? "bg-primary/5 border-primary/20" : "bg-background"}`}>
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="flex items-center text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className={`mt-1 ${pending ? "text-xs" : "text-lg"} font-semibold ${color}`}>{value}</div>
       {sub && <div className="mt-0.5 text-[10px] text-muted-foreground">{sub}</div>}
     </div>
