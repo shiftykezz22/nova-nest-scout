@@ -88,6 +88,11 @@ export type ProductData = {
   product_url?: string;
   data_source?: string;
   last_updated?: string;
+  // Expanded product metadata (SerpAPI Walmart Product Phase 1)
+  specifications?: Record<string, string>;
+  product_type?: string;
+  category_path?: string[];
+  description?: string;
   // manual/estimated
   estimated_demand?: number;
   unit_cost?: number;
