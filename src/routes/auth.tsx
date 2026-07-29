@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ShoppingBag, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { clearGuest } from "@/lib/guest";
 
 type Search = { mode?: "signin" | "signup" | "reset" };
 
@@ -34,7 +35,10 @@ function AuthPage() {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) router.navigate({ to: "/dashboard", replace: true });
+      if (data.session) {
+        clearGuest();
+        router.navigate({ to: "/dashboard", replace: true });
+      }
     });
   }, [router]);
 
@@ -52,6 +56,7 @@ function AuthPage() {
       } else if (mode === "signin") {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
+        clearGuest();
         router.navigate({ to: "/dashboard", replace: true });
       } else {
         const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/auth` });
