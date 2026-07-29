@@ -3,6 +3,8 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { ProductData } from "./walmart";
 import { identifyInput } from "./walmart";
 import { productFingerprint, classifyMatch } from "./matching";
+import { extractSpecs, extractModelFromText, stripHtml, extractCategoryPath } from "./serpapi-spec-extract";
+import { synthesizeCategoryPath, formatCategoryPath } from "./category-map";
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -104,26 +106,43 @@ async function fetchSerpApiProduct(itemId: string): Promise<{ product: Partial<P
     const title = p.title || p.product_name || p.name;
     if (title && typeof title === "string") { out.title = sanitizeTitle(title) || title.trim(); out.sources!.title = "verified"; }
 
-    const brand = p.brand || p.manufacturer;
+    // Structured spec extraction (SerpAPI returns specification_highlights[]
+    // and specifications[]; both often contain the Model / MPN that top-level
+    // fields miss).
+    const extracted = extractSpecs(p.specification_highlights, p.specifications, p.product_highlights);
+    if (Object.keys(extracted.specifications).length) {
+      out.specifications = extracted.specifications;
+      out.sources!.specifications = "verified";
+    }
+    const spec = extracted.mapped;
+
+    const brand = p.brand || spec.brand || p.manufacturer || spec.manufacturer;
     if (brand) { out.brand = String(brand); out.sources!.brand = "verified"; }
 
-    if (p.manufacturer) { out.manufacturer = String(p.manufacturer); out.sources!.manufacturer = "verified"; }
+    const manufacturer = p.manufacturer || spec.manufacturer;
+    if (manufacturer) { out.manufacturer = String(manufacturer); out.sources!.manufacturer = "verified"; }
 
     const upc = p.upc || p.gtin13 || p.upc_a;
     if (upc) { out.upc_gtin = String(upc); out.sources!.upc_gtin = "verified"; }
-    if (p.gtin || p.gtin14) { out.gtin = String(p.gtin || p.gtin14); out.sources!.gtin = "verified"; }
-    if (p.ean || p.ean13) { out.ean = String(p.ean || p.ean13); out.sources!.ean = "verified"; }
+    if (p.gtin || p.gtin14 || spec.gtin) { out.gtin = String(p.gtin || p.gtin14 || spec.gtin); out.sources!.gtin = "verified"; }
+    if (p.ean || p.ean13 || spec.ean) { out.ean = String(p.ean || p.ean13 || spec.ean); out.sources!.ean = "verified"; }
 
-    const model = p.model || p.model_number;
+    const model = p.model || p.model_number || spec.model;
     if (model) { out.model = String(model); out.sources!.model = "verified"; }
-    const mpn = p.manufacturer_part_number || p.mpn || p.part_number;
+    const mpn = p.manufacturer_part_number || p.mpn || p.part_number || p.manufacture_number || spec.manufacturer_part_number;
     if (mpn) { out.manufacturer_part_number = String(mpn); out.sources!.manufacturer_part_number = "verified"; }
     if (p.sku) { out.sku = String(p.sku); out.sources!.sku = "verified"; }
-    if (p.color) { out.color = String(p.color); out.sources!.color = "verified"; }
-    if (p.size) { out.size = String(p.size); out.sources!.size = "verified"; }
-    const pack = p.pack_size || p.pack_quantity || p.count_per_pack;
+    if (p.color || spec.color) { out.color = String(p.color || spec.color); out.sources!.color = "verified"; }
+    if (p.size || spec.size) { out.size = String(p.size || spec.size); out.sources!.size = "verified"; }
+    const pack = p.pack_size || p.pack_quantity || p.count_per_pack || spec.pack_quantity;
     if (pack) { out.pack_quantity = String(pack); out.sources!.pack_quantity = "verified"; }
-    if (p.condition) { out.condition = String(p.condition); out.sources!.condition = "verified"; }
+    if (p.condition || spec.condition) { out.condition = String(p.condition || spec.condition); out.sources!.condition = "verified"; }
+    if (spec.shipping_weight) { out.shipping_weight = spec.shipping_weight; out.sources!.shipping_weight = "verified"; }
+    if (spec.dimensions) { out.dimensions = spec.dimensions; out.sources!.dimensions = "verified"; }
+    if (typeof p.product_type === "string" && p.product_type.trim()) {
+      out.product_type = p.product_type.trim();
+      out.sources!.product_type = "verified";
+    }
     if (p.variation || p.variant_name) { out.variation = String(p.variation || p.variant_name); out.sources!.variation = "verified"; }
 
     // Price: SerpApi walmart_product exposes price under several shapes
@@ -181,14 +200,47 @@ async function fetchSerpApiProduct(itemId: string): Promise<{ product: Partial<P
     const shippedBy = p.shipped_by || p.fulfilled_by;
     if (shippedBy) { out.shipped_by = String(shippedBy); out.sources!.shipped_by = "verified"; }
 
-    // Category from breadcrumbs or category name
-    let cat: string | undefined;
-    if (Array.isArray(p.breadcrumbs) && p.breadcrumbs.length) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      cat = p.breadcrumbs.map((b: any) => (typeof b === "string" ? b : b?.name || b?.title)).filter(Boolean).join(" / ");
-    } else if (typeof p.category === "string") cat = p.category;
-    else if (p.category?.name) cat = p.category.name;
-    if (cat) { out.category = cat; out.sources!.category = "verified"; }
+    // Category — prefer SerpAPI `categories[]` (ordered path), then
+    // breadcrumbs, then a deterministic keyword-based synthesis.
+    let path = extractCategoryPath(p.categories);
+    if (!path && Array.isArray(p.breadcrumbs) && p.breadcrumbs.length) {
+      path = p.breadcrumbs
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .map((b: any) => (typeof b === "string" ? b : b?.name || b?.title))
+        .filter((s: unknown): s is string => typeof s === "string" && !!s.trim());
+    }
+    if ((!path || path.length < 2)) {
+      const synth = synthesizeCategoryPath({
+        title: out.title,
+        product_type: out.product_type,
+        manufacturer: out.manufacturer,
+        brand: out.brand,
+      });
+      if (synth && (!path || synth.length > path.length)) path = synth;
+    }
+    if (path && path.length) {
+      out.category_path = path;
+      out.category = formatCategoryPath(path);
+      out.sources!.category = "verified";
+      out.sources!.category_path = "verified";
+    } else if (typeof p.category === "string") {
+      out.category = p.category;
+      out.sources!.category = "verified";
+    } else if (p.category?.name) {
+      out.category = p.category.name;
+      out.sources!.category = "verified";
+    }
+
+    // Descriptions — strip HTML from detailed_description_html /
+    // short_description_html and store as plain text.
+    const desc = stripHtml(p.detailed_description_html) || stripHtml(p.short_description_html) || (typeof p.description === "string" ? p.description : undefined);
+    if (desc) { out.description = desc; out.sources!.description = "verified"; }
+
+    // Title/description regex fallback for Model / MPN when specs missed.
+    if (!out.model) {
+      const guessed = extractModelFromText(out.title, out.brand) || extractModelFromText(out.description, out.brand);
+      if (guessed) { out.model = guessed; out.sources!.model = "public"; }
+    }
 
     // Stock
     let stock: string | undefined;
@@ -635,14 +687,28 @@ export const analyzeProduct = createServerFn({ method: "POST" })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (product as any).retrieval = retrieval;
     product.scanned_at = new Date().toISOString();
-    // Product match confidence + data completeness (0-100).
-    const keys: (keyof ProductData)[] = ["title", "price", "brand", "image", "rating", "review_count", "upc_gtin", "model", "seller", "category"];
-    const filled = keys.filter((k) => product[k] != null && product[k] !== "").length;
-    const dataCompleteness = Math.round((filled / keys.length) * 100);
-    let matchConfidence = 40;
-    if (product.upc_gtin) matchConfidence += 25;
-    if (product.brand && product.model) matchConfidence += 20;
+    // Product match confidence + data completeness — expanded field set (Phase 1).
+    const criticalKeys: (keyof ProductData)[] = [
+      "title", "price", "brand", "model", "manufacturer_part_number", "upc_gtin",
+      "category", "manufacturer", "image", "rating", "review_count",
+    ];
+    const filled = criticalKeys.filter((k) => product[k] != null && product[k] !== "").length;
+    const specCount = product.specifications ? Object.keys(product.specifications).length : 0;
+    const pathDepth = product.category_path?.length ?? (product.category ? 1 : 0);
+    const completenessRaw = (filled / criticalKeys.length) * 100;
+    const specBonus = Math.min(10, specCount);
+    const dataCompleteness = Math.min(100, Math.round(completenessRaw + specBonus));
+    let matchConfidence = 20;
+    if (product.upc_gtin) matchConfidence += 20;
+    if (product.brand) matchConfidence += 10;
+    if (product.model) matchConfidence += 15;
     if (product.manufacturer_part_number) matchConfidence += 10;
+    if (product.manufacturer) matchConfidence += 5;
+    if (pathDepth >= 2) matchConfidence += 10;
+    if (specCount >= 5) matchConfidence += 10;
+    if (product.price != null) matchConfidence += 5;
+    if (product.image) matchConfidence += 5;
+    if (product.rating != null && product.review_count != null) matchConfidence += 5;
     if (cross.barcode.status === "ok" && (cross.barcode.matches ?? 0) >= 1) matchConfidence += 10;
     matchConfidence = Math.min(100, matchConfidence);
     const { data: row, error } = await context.supabase
