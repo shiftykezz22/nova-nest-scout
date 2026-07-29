@@ -11,11 +11,14 @@ import { PageHeader } from "@/components/AppShell";
 import { SearchResults, type Candidate } from "@/components/SearchResults";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
+  ssr: false,
   head: () => ({ meta: [
     { title: "New scan — NovaNest Scout" },
     { name: "description", content: "Analyze a Walmart product URL and start supplier discovery." },
     { property: "og:title", content: "NovaNest Scout dashboard" },
     { property: "og:description", content: "Paste a Walmart URL to start a new analysis." },
+    { property: "og:type", content: "website" },
+    { name: "twitter:card", content: "summary_large_image" },
   ]}),
   component: Dashboard,
 });
