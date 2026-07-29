@@ -142,3 +142,32 @@
     color: var(--color-foreground);
   }
 }
+
+/* Device-aware performance tweaks. Set by src/lib/device-detect.ts */
+html.is-mobile *,
+html.is-mobile *::before,
+html.is-mobile *::after {
+  animation-duration: 0.15s !important;
+  transition-duration: 0.15s !important;
+}
+
+@media (hover: none) {
+  html.is-mobile .hover-scale:hover {
+    transform: none !important;
+  }
+}
+
+html.is-mobile img,
+html.is-mobile video {
+  image-rendering: auto;
+}
+
+html.is-mobile button,
+html.is-mobile a,
+html.is-mobile [role="button"] {
+  touch-action: manipulation;
+}
+
+html.is-safari {
+  -webkit-tap-highlight-color: transparent;
+}
