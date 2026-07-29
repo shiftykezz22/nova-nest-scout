@@ -31,6 +31,8 @@ export function ProductEditor({ product, onChange }: Props) {
         <FieldValue label="Walmart Item ID" value={product.walmart_item_id} source={src("walmart_item_id")} />
         <FieldValue label="UPC / GTIN" value={product.upc_gtin} source={src("upc_gtin")} />
         <FieldValue label="Model" value={product.model} source={src("model")} />
+        <FieldValue label="Manufacturer part #" value={product.manufacturer_part_number} source={src("manufacturer_part_number")} />
+        <FieldValue label="Manufacturer" value={product.manufacturer} source={src("manufacturer")} />
         <FieldValue label="Category" value={product.category} source={src("category")} />
         <FieldValue label="Price" value={product.price != null ? `$${product.price.toFixed(2)}` : undefined} source={src("price")} />
         <FieldValue label="Rating" value={product.rating ? `${product.rating} ★ (${product.review_count ?? 0} reviews)` : undefined} source={src("rating")} />
@@ -52,6 +54,8 @@ export function ProductEditor({ product, onChange }: Props) {
           <Field label="Brand" v={product.brand ?? ""} onChange={(v) => update("brand", v)} />
           <Field label="UPC / GTIN" v={product.upc_gtin ?? ""} onChange={(v) => update("upc_gtin", v)} />
           <Field label="Model" v={product.model ?? ""} onChange={(v) => update("model", v)} />
+          <Field label="Manufacturer part #" v={product.manufacturer_part_number ?? ""} onChange={(v) => update("manufacturer_part_number", v)} />
+          <Field label="Manufacturer" v={product.manufacturer ?? ""} onChange={(v) => update("manufacturer", v)} />
           <Field label="Category" v={product.category ?? ""} onChange={(v) => update("category", v)} />
           <Field label="Size" v={product.size ?? ""} onChange={(v) => update("size", v)} />
           <Field label="Shipping weight" v={product.shipping_weight ?? ""} onChange={(v) => update("shipping_weight", v)} />
