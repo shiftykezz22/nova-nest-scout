@@ -639,6 +639,21 @@ async function resolveAndFetch(rawInput: string): Promise<{
     recovered = r.recovered;
   }
 
+  // Phase 2 — Secondary enrichment (BlueCart + constrained LLM + reviews).
+  // Only touches Model / MPN / hierarchical category gaps left by Phase 1.
+  let enrichment: EnrichmentResult | undefined;
+  try {
+    enrichment = await runEnrichment(product, { itemId, upc });
+    if (enrichment.ran) {
+      for (const s of enrichment.stages) {
+        const providerName = s.name === "bluecart" ? "bluecart" : s.name === "llm" ? "llm.gateway" : "serpapi.reviews";
+        if (!sourcesTried.includes(providerName)) sourcesTried.push(providerName);
+      }
+    }
+  } catch (e) {
+    console.log("[enrichment] fatal", String(e).slice(0, 200));
+  }
+
   const missing: string[] = [];
   const keys: (keyof ProductData)[] = ["title", "brand", "upc_gtin", "model", "category", "price", "rating", "review_count", "seller", "stock_status", "image"];
   for (const k of keys) if (product[k] == null || product[k] === "") missing.push(String(k));
@@ -651,6 +666,7 @@ async function resolveAndFetch(rawInput: string): Promise<{
     fields_recovered: recovered,
     fields_missing: missing,
     provider,
+    enrichment,
   };
   return { normalizedUrl, itemId, upc, product, retrieval };
 }
