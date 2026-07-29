@@ -687,14 +687,28 @@ export const analyzeProduct = createServerFn({ method: "POST" })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (product as any).retrieval = retrieval;
     product.scanned_at = new Date().toISOString();
-    // Product match confidence + data completeness (0-100).
-    const keys: (keyof ProductData)[] = ["title", "price", "brand", "image", "rating", "review_count", "upc_gtin", "model", "seller", "category"];
-    const filled = keys.filter((k) => product[k] != null && product[k] !== "").length;
-    const dataCompleteness = Math.round((filled / keys.length) * 100);
-    let matchConfidence = 40;
-    if (product.upc_gtin) matchConfidence += 25;
-    if (product.brand && product.model) matchConfidence += 20;
+    // Product match confidence + data completeness — expanded field set (Phase 1).
+    const criticalKeys: (keyof ProductData)[] = [
+      "title", "price", "brand", "model", "manufacturer_part_number", "upc_gtin",
+      "category", "manufacturer", "image", "rating", "review_count",
+    ];
+    const filled = criticalKeys.filter((k) => product[k] != null && product[k] !== "").length;
+    const specCount = product.specifications ? Object.keys(product.specifications).length : 0;
+    const pathDepth = product.category_path?.length ?? (product.category ? 1 : 0);
+    const completenessRaw = (filled / criticalKeys.length) * 100;
+    const specBonus = Math.min(10, specCount);
+    const dataCompleteness = Math.min(100, Math.round(completenessRaw + specBonus));
+    let matchConfidence = 20;
+    if (product.upc_gtin) matchConfidence += 20;
+    if (product.brand) matchConfidence += 10;
+    if (product.model) matchConfidence += 15;
     if (product.manufacturer_part_number) matchConfidence += 10;
+    if (product.manufacturer) matchConfidence += 5;
+    if (pathDepth >= 2) matchConfidence += 10;
+    if (specCount >= 5) matchConfidence += 10;
+    if (product.price != null) matchConfidence += 5;
+    if (product.image) matchConfidence += 5;
+    if (product.rating != null && product.review_count != null) matchConfidence += 5;
     if (cross.barcode.status === "ok" && (cross.barcode.matches ?? 0) >= 1) matchConfidence += 10;
     matchConfidence = Math.min(100, matchConfidence);
     const { data: row, error } = await context.supabase
