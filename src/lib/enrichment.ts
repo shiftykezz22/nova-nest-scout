@@ -41,7 +41,7 @@ export type EnrichmentResult = {
   reason: string;
   stages: EnrichmentStage[];
   fields_filled: string[];
-  llm_audit?: { input: Record<string, unknown>; output: unknown; error?: string };
+  llm_audit?: { input: string; output: string; error?: string };
 };
 
 function isWeakCategory(product: Partial<ProductData>): boolean {
@@ -167,9 +167,10 @@ RULES (non-negotiable):
 - If a known_* value is provided and correct, echo it. If it is provided and clearly wrong, return null (do not correct).
 - Output must be a single JSON object. No prose, no code fences, no trailing commas.`;
 
-async function constrainedLlmFill(product: Partial<ProductData>): Promise<{ result?: LlmFill; audit: { input: Record<string, unknown>; output: unknown; error?: string } }> {
-  const input = buildLlmInput(product);
-  const audit: { input: Record<string, unknown>; output: unknown; error?: string } = { input, output: null };
+async function constrainedLlmFill(product: Partial<ProductData>): Promise<{ result?: LlmFill; audit: { input: string; output: string; error?: string } }> {
+  const inputObj = buildLlmInput(product);
+  const inputStr = JSON.stringify(inputObj);
+  const audit: { input: string; output: string; error?: string } = { input: inputStr, output: "" };
   const key = process.env.LOVABLE_API_KEY;
   if (!key) { audit.error = "lovable_api_key_missing"; return { audit }; }
   try {
@@ -182,7 +183,7 @@ async function constrainedLlmFill(product: Partial<ProductData>): Promise<{ resu
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: LLM_SYSTEM },
-          { role: "user", content: JSON.stringify(input) },
+          { role: "user", content: inputStr },
         ],
       }),
       signal: AbortSignal.timeout(20000),
