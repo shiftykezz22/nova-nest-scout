@@ -6,6 +6,7 @@ const LABELS: Record<FieldSource, string> = {
   public: "Publicly Retrieved",
   user: "User Entered",
   estimated: "Estimated",
+  inferred: "Enrichment (Verified)",
   unavailable: "Unavailable",
 };
 
@@ -14,6 +15,7 @@ const COLORS: Record<FieldSource, string> = {
   public: "bg-sky-100 text-sky-800 border-sky-200",
   user: "bg-amber-100 text-amber-800 border-amber-200",
   estimated: "bg-violet-100 text-violet-800 border-violet-200",
+  inferred: "bg-indigo-100 text-indigo-800 border-indigo-200",
   unavailable: "bg-muted text-muted-foreground border-border",
 };
 

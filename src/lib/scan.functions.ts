@@ -5,6 +5,7 @@ import { identifyInput } from "./walmart";
 import { productFingerprint, classifyMatch } from "./matching";
 import { extractSpecs, extractModelFromText, stripHtml, extractCategoryPath } from "./serpapi-spec-extract";
 import { synthesizeCategoryPath, formatCategoryPath } from "./category-map";
+import { runEnrichment, type EnrichmentResult } from "./enrichment";
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -17,6 +18,7 @@ type Retrieval = {
   fields_missing: string[];
   provider?: string;
   stages?: Array<{ name: string; status: "ok" | "skipped" | "error"; note?: string }>;
+  enrichment?: EnrichmentResult;
 };
 
 const ANTIBOT_RX = /robot or human\?|are you a human|verify you are human|unusual traffic|access denied|captcha|px-captcha|perimeterx|please enable javascript and cookies|blocked by/i;
@@ -637,6 +639,21 @@ async function resolveAndFetch(rawInput: string): Promise<{
     recovered = r.recovered;
   }
 
+  // Phase 2 — Secondary enrichment (BlueCart + constrained LLM + reviews).
+  // Only touches Model / MPN / hierarchical category gaps left by Phase 1.
+  let enrichment: EnrichmentResult | undefined;
+  try {
+    enrichment = await runEnrichment(product, { itemId, upc });
+    if (enrichment.ran) {
+      for (const s of enrichment.stages) {
+        const providerName = s.name === "bluecart" ? "bluecart" : s.name === "llm" ? "llm.gateway" : "serpapi.reviews";
+        if (!sourcesTried.includes(providerName)) sourcesTried.push(providerName);
+      }
+    }
+  } catch (e) {
+    console.log("[enrichment] fatal", String(e).slice(0, 200));
+  }
+
   const missing: string[] = [];
   const keys: (keyof ProductData)[] = ["title", "brand", "upc_gtin", "model", "category", "price", "rating", "review_count", "seller", "stock_status", "image"];
   for (const k of keys) if (product[k] == null || product[k] === "") missing.push(String(k));
@@ -649,6 +666,7 @@ async function resolveAndFetch(rawInput: string): Promise<{
     fields_recovered: recovered,
     fields_missing: missing,
     provider,
+    enrichment,
   };
   return { normalizedUrl, itemId, upc, product, retrieval };
 }
@@ -770,15 +788,15 @@ export const analyzeProduct = createServerFn({ method: "POST" })
       const v = (product as any)[k];
       if (v == null || v === "") continue;
       const upgrade = upgradedFields.get(k);
-      const baseStatus = src === "verified" ? "verified" : src === "public" ? "single_source" : src === "user" ? "user_entered" : src === "estimated" ? "estimated" : "unavailable";
+      const baseStatus = src === "verified" ? "verified" : src === "public" ? "single_source" : src === "user" ? "user_entered" : src === "estimated" ? "estimated" : src === "inferred" ? "inferred" : "unavailable";
       const finalStatus = upgrade?.status ?? baseStatus;
-      const confidence = finalStatus === "cross_checked" ? 95 : finalStatus === "verified" ? 90 : finalStatus === "user_entered" ? 100 : finalStatus === "single_source" ? 70 : finalStatus === "estimated" ? 40 : 0;
+      const confidence = finalStatus === "cross_checked" ? 95 : finalStatus === "verified" ? 90 : finalStatus === "user_entered" ? 100 : finalStatus === "single_source" ? 70 : finalStatus === "inferred" ? 60 : finalStatus === "estimated" ? 40 : 0;
       obs.push({
         scan_id: row.id,
         field_name: k,
         raw_value: String(v).slice(0, 500),
         normalized_value: String(v).slice(0, 500),
-        source_name: retrieval.provider || "walmart_html",
+        source_name: product.source_names?.[k] || retrieval.provider || "walmart_html",
         source_url: normalizedUrl,
         verification_status: finalStatus,
         confidence,

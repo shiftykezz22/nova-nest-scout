@@ -54,7 +54,7 @@ export function identifyInput(raw: string): IdentifiedInput {
   return { ok: true, kind: "query", query: s };
 }
 
-export type FieldSource = "verified" | "public" | "user" | "estimated" | "unavailable";
+export type FieldSource = "verified" | "public" | "user" | "estimated" | "inferred" | "unavailable";
 
 export type ProductData = {
   title?: string;
