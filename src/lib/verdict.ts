@@ -38,10 +38,16 @@ export function detectRisks(p: ProductData): string[] {
   return r;
 }
 
-export function evaluate(product: ProductData, calc: CalcResult, hasSupplier: boolean): VerdictResult {
+export type EvaluateOpts = {
+  costEstimated?: boolean;
+  estimateConfidence?: "low" | "medium" | "high";
+};
+
+export function evaluate(product: ProductData, calc: CalcResult, hasSupplier: boolean, opts: EvaluateOpts = {}): VerdictResult {
+  const { costEstimated = false, estimateConfidence = "low" } = opts;
   const missing: string[] = [];
   if (!product.price) missing.push("Selling price");
-  if (!product.unit_cost) missing.push("Unit cost");
+  if (!product.unit_cost && !costEstimated) missing.push("Unit cost");
   if (!product.estimated_demand) missing.push("Estimated demand");
   if (!hasSupplier) missing.push("Supplier quote");
   if (!product.shipping_weight && !product.product_weight) missing.push("Product weight");
@@ -61,9 +67,13 @@ export function evaluate(product: ProductData, calc: CalcResult, hasSupplier: bo
 
   const opportunityScore = Math.round((profitScore + roiScore + demandScore + competitionScore + supplierScore + riskScore) / 6);
 
-  const fields = [product.title, product.price, product.unit_cost, product.estimated_demand, hasSupplier || undefined, product.rating, product.review_count, product.shipping_weight || product.product_weight];
+  const fields = [product.title, product.price, product.unit_cost || (costEstimated ? 1 : undefined), product.estimated_demand, hasSupplier || undefined, product.rating, product.review_count, product.shipping_weight || product.product_weight];
   const filled = fields.filter(Boolean).length;
-  const confidence = Math.round((filled / fields.length) * 100);
+  let confidence = Math.round((filled / fields.length) * 100);
+  if (costEstimated) {
+    const penalty = estimateConfidence === "high" ? 8 : estimateConfidence === "medium" ? 14 : 22;
+    confidence = Math.max(0, confidence - penalty);
+  }
 
   const reasons: string[] = [];
   const positives: string[] = [];
@@ -83,10 +93,13 @@ export function evaluate(product: ProductData, calc: CalcResult, hasSupplier: bo
   if ((product.review_count ?? 0) >= 100 && (product.rating ?? 0) >= 4) positives.push("Strong customer feedback signals.");
 
   const criticalRisk = risks.some((r) => /hazardous/i.test(r));
+  const p = calc.estimatedProfit;
+  const roi = calc.roi;
+  const margin = calc.profitMargin;
   let verdict: Verdict;
   let label: string;
   let nextAction: string;
-  if (missing.length >= 3 || confidence < 40) {
+  if (missing.length >= 3 || confidence < 30) {
     verdict = "INSUFFICIENT_DATA";
     label = "Insufficient Data";
     nextAction = "Fill in the missing fields below to get a recommendation.";
@@ -94,15 +107,27 @@ export function evaluate(product: ProductData, calc: CalcResult, hasSupplier: bo
     verdict = "INSUFFICIENT_DATA";
     label = "Insufficient Data";
     nextAction = "Enter a selling price and unit cost to calculate profit.";
-  } else if (calc.estimatedProfit < 0 || calc.roi < 10 || calc.profitMargin < 5 || criticalRisk || risks.length >= 4) {
+  } else if (costEstimated && (p < 3 || roi < 15 || margin < 8)) {
+    verdict = "SKIP";
+    label = "Skip — Even Optimistic Estimate Is Too Thin";
+    nextAction = "Even a favorable cost estimate leaves too little profit. Move on unless you can source dramatically cheaper.";
+  } else if (p < 0 || roi < 10 || margin < 5 || criticalRisk || risks.length >= 4) {
     verdict = "SKIP";
     label = "High Risk";
     nextAction = "This product does not meet minimum profit or risk requirements.";
-  } else if (calc.estimatedProfit >= 5 && calc.roi >= 30 && calc.profitMargin >= 15 && hasSupplier && risks.length === 0) {
+  } else if (costEstimated && p >= 5 && roi >= 30 && margin >= 15 && risks.length === 0) {
+    verdict = "REVIEW";
+    label = "Promising — Get Real Quote";
+    nextAction = `Estimate points to $${p.toFixed(2)} profit at ${roi.toFixed(0)}% ROI. Contact a supplier now and confirm real unit cost + shipping before ordering.`;
+  } else if (costEstimated) {
+    verdict = "REVIEW";
+    label = "Borderline — Verify Real Cost First";
+    nextAction = `Estimate is thin (${margin.toFixed(0)}% margin, ${roi.toFixed(0)}% ROI). Get a real supplier quote — even a small cost change flips this deal.`;
+  } else if (p >= 5 && roi >= 30 && margin >= 15 && hasSupplier && risks.length === 0) {
     verdict = "BUY";
     label = "Strong Buy Candidate";
     nextAction = "Order a sample from your supplier and validate shipping.";
-  } else if (calc.profitMargin < 12 || calc.roi < 20) {
+  } else if (margin < 12 || roi < 20) {
     verdict = "REVIEW";
     label = "Borderline";
     nextAction = "Margins are thin — verify fees, shipping, and demand before ordering.";
