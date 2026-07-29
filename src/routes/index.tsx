@@ -105,10 +105,10 @@ function Landing() {
           <ShieldCheck className="h-3.5 w-3.5 text-primary" /> Free guest scan — no signup required
         </div>
         <h1 className="mt-5 text-3xl font-bold tracking-tight text-foreground md:text-5xl">
-          Research any <span className="text-primary">Walmart product</span> in seconds
+          Find profitable <span className="text-primary">Walmart products</span> fast
         </h1>
         <p className="mt-3 text-muted-foreground md:text-lg">
-          Paste a Walmart product URL. Get real pricing, supplier hooks, profit math, and a clear Buy / Review / Skip verdict.
+          Paste a link. Get cost estimates, supplier leads, and a clear Buy / Skip verdict — free.
         </p>
 
         <div className="mt-8 rounded-2xl border bg-card p-4 shadow-sm md:p-6">

@@ -109,8 +109,8 @@ export function evaluate(product: ProductData, calc: CalcResult, hasSupplier: bo
     nextAction = "Enter a selling price and unit cost to calculate profit.";
   } else if (costEstimated && (p < 3 || roi < 15 || margin < 8)) {
     verdict = "SKIP";
-    label = "Skip — Even Optimistic Estimate Is Too Thin";
-    nextAction = "Even a favorable cost estimate leaves too little profit. Move on unless you can source dramatically cheaper.";
+    label = "Skip — Estimate Too Thin";
+    nextAction = "Even the optimistic estimate is too low. Skip this product.";
   } else if (p < 0 || roi < 10 || margin < 5 || criticalRisk || risks.length >= 4) {
     verdict = "SKIP";
     label = "High Risk";
@@ -118,23 +118,23 @@ export function evaluate(product: ProductData, calc: CalcResult, hasSupplier: bo
   } else if (costEstimated && p >= 5 && roi >= 30 && margin >= 15 && risks.length === 0) {
     verdict = "REVIEW";
     label = "Promising — Get Real Quote";
-    nextAction = `Estimate points to $${p.toFixed(2)} profit at ${roi.toFixed(0)}% ROI. Contact a supplier now and confirm real unit cost + shipping before ordering.`;
+    nextAction = "Open the Alibaba / ThomasNet links and get a real unit cost before ordering anything.";
   } else if (costEstimated) {
     verdict = "REVIEW";
-    label = "Borderline — Verify Real Cost First";
-    nextAction = `Estimate is thin (${margin.toFixed(0)}% margin, ${roi.toFixed(0)}% ROI). Get a real supplier quote — even a small cost change flips this deal.`;
+    label = "Borderline — Verify Cost First";
+    nextAction = `Numbers are thin at ~${margin.toFixed(0)}% margin. Get a real supplier quote before ordering — a small cost change flips this deal.`;
   } else if (p >= 5 && roi >= 30 && margin >= 15 && hasSupplier && risks.length === 0) {
     verdict = "BUY";
     label = "Strong Buy Candidate";
-    nextAction = "Order a sample from your supplier and validate shipping.";
+    nextAction = "Numbers look strong. Order a small test quantity from your supplier and validate shipping.";
   } else if (margin < 12 || roi < 20) {
     verdict = "REVIEW";
     label = "Borderline";
-    nextAction = "Margins are thin — verify fees, shipping, and demand before ordering.";
+    nextAction = "Margins are thin. Verify fees, shipping, and demand before ordering.";
   } else {
     verdict = "REVIEW";
     label = "Promising — Verify Supplier";
-    nextAction = "Confirm freight cost and demand estimate before ordering.";
+    nextAction = "Numbers look decent. Confirm real supplier cost and shipping, then order a small test quantity.";
   }
 
   return {
